@@ -1,0 +1,83 @@
+THIS IS A PASSION PROJECT STEMMING FROM BOREDOM AND A MILD DISDAIN FOR TRADITIONAL AI MODELS.
+
+I practically vibe coded this with help from claude and chat gpt and whatever the fuck ai is on googles search, kinda ironic actually. (CRY ABOUT IT. Helps me get my cursed projects done)
+
+
+Me yapping:
+
+This started as a simple Python project. I've been coding for a couple of years now. Started with scratch, then Python. Of course a little bit of GDScript, C++, and java.
+Then AI came along and helped me progress a lot faster. So I decided I would start investigating how AI worked. And it's pretty cool.
+
+HOWEVER there are some glaring issues in the political spotlight. I don't even want to talk about that shit. I hate politics.
+What I will say though is that brains are a lot better more efficient than stinky data centers.
+
+So I was like, I'll just build my own brain on my computer because it's frowned upon to steal other people's brains.
+Python's good for a lot of things, but really fast, complicated math is not one of them. PyTorch and NumPy just weren't cutting it. So we went straight to the source. ;)
+I might put this on GitHub, GitHub's frustrating as all hell. I'll get it there at some point.
+
+PS: Don't ask me about any of the acronyms. I don't know what any of them mean.
+
+
+
+The simulator is a custom C++17/CUDA engine written from scratch, not built on an existing framework like NEST, Brian2 or GeNN. Every part of the engine is designed around one constraint: get as close to real time as possible without simplifying the biology.
+
+
+Neuron and synapse model:
+
+Adaptive exponential integrate-and-fire (AdEx) soma with 4 dendritic compartments per neuron, electrically coupled to the soma, with back-propagating spikes.
+Conductance-based AMPA, NMDA (with voltage-dependent magnesium block) and GABA synapses.
+Each neuron has 160 simulated synaptic inputs by default. The rest of its roughly 6,900 inputs arrive as Poisson background drive, so total input stays biologically scaled.
+Fixed 0.1 ms time step by default, configurable from 1/16 to 1/2 ms. Axonal delays of 1–3 ms.
+
+Execution model:
+
+One persistent cooperative kernel: the whole simulation runs inside a single long-lived CUDA kernel (up to 10,000 steps per launch), synchronised with grid-wide barriers instead of host-side launches.
+Minimum-delay epochs: no spike can arrive sooner than 1 ms, so each neuron is integrated for 10 steps entirely in registers with no communication. Only then does the grid synchronise and exchange spikes.
+Many neurons per thread: neuron state is streamed in and out of registers each epoch. Network size is limited by GPU memory, not by thread count.
+Stateless random numbers: counter-based Philox generates every random number from (neuron, step), so there's no per-neuron RNG state to store or load.
+
+Spike delivery:
+
+Hybrid push–pull design:
+Push: each spiking neuron gets its own warp, which walks its outgoing synapses and leaves a compact "note" with each target.
+Pull: each neuron processes only the notes it received, so the work scales with spikes rather than with network size.
+Warp-pooled delivery: notes from all 32 neurons in a warp are pooled and processed in parallel, keeping 32 memory requests in flight instead of one.
+Weight prefetching and a one-step-ahead input prefetch, to hide memory latency.
+Compressed CSR synapse lists with delay and dendritic branch packed into 16 bits per synapse, read through the read-only cache.
+
+Plasticity:
+
+Spike-timing-dependent plasticity (STDP), with pre- and postsynaptic traces replayed exactly within each epoch. Potentiation is shared across a warp, with coalesced memory access.
+Three-factor dopamine learning: STDP marks synapses with eligibility traces (lazily decayed, stored as a value plus timestamp per synapse), which a reward signal turns into weight changes.
+
+Verification and profiling:
+
+An independent double-precision CPU reference re-runs the same network. The GPU passes only if its error matches pure float32 rounding noise. A built-in self-test confirms the validator catches a deliberately planted bug.
+Per-phase GPU timers (integrate, barrier, delivery) on every run, a built-in Nsight Compute profiling window, and a logged standard benchmark.
+Optimised by measurement: every change was profiled and kept only if it was faster and still passed validation.
+
+
+1,000,000 neurons, 160 million synapses: 0.2× real time (4.9 s per simulated second)
+100,000 neurons, 16 million synapses: 2.5× faster than real time
+30,000 neurons: 9.8× real time
+10,000 neurons: 20× real time
+*stats from my RTX 5060 Ti
+
+
+
+
+
+
+
+
+Somehow, still no bitches. \(i^i)/
+
+
+
+
+
+
+
+
+
+8=====D

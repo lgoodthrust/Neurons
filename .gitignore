@@ -1,0 +1,129 @@
+# ==========================================
+# Visual Studio
+# ==========================================
+# Visual Studio
+.vs/
+backups/
+x64/
+vcpkg/
+vcpkg_installed/
+*.vcxproj.user
+
+# Build output
+x64/
+x86/
+Debug/
+Release/
+*.obj
+*.pdb
+*.exe
+*.ilk
+
+# Profiling output
+*.ncu-rep
+*.ncu-repz
+*.nsys-rep
+
+# Temporary files
+*.log
+*.tmp
+*.bak
+
+# ==========================================
+# Build directories
+# ==========================================
+[Dd]ebug/
+[Rr]elease/
+x64/
+x86/
+[Bb]uild/
+[Bb]in/
+[Oo]bj/
+out/
+.intermediate/
+
+# ==========================================
+# Compiled files
+# ==========================================
+*.exe
+*.dll
+*.lib
+*.obj
+*.o
+*.a
+*.so
+*.exp
+*.pdb
+*.ilk
+*.idb
+*.pch
+*.res
+*.tlog
+*.lastbuildstate
+*.iobj
+*.ipdb
+
+# ==========================================
+# CUDA generated files
+# ==========================================
+*.cubin
+*.fatbin
+*.ptx
+*.nvprof
+
+# ==========================================
+# NVIDIA Nsight profiling
+# ==========================================
+*.ncu-rep
+*.ncu-repz
+*.nsys-rep
+*.qdrep
+*.qdstrm
+*.nsight-cuproj
+*.nsight-sys
+
+# ==========================================
+# Python
+# ==========================================
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+.pytest_cache/
+
+# ==========================================
+# CMake generated files
+# ==========================================
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+cmake-build-*/
+compile_commands.json
+
+# ==========================================
+# Temporary files and logs
+# ==========================================
+*.log
+*.tmp
+*.temp
+*.bak
+*.old
+*.dmp
+*.swp
+
+# ==========================================
+# Operating system files
+# ==========================================
+Thumbs.db
+desktop.ini
+.DS_Store
+
+# ==========================================
+# Credentials and secrets
+# ==========================================
+.env
+.env.*
+!.env.example
+*.pem
+*.key

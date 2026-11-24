@@ -1,0 +1,19 @@
+{
+    "name": "project-brain",
+    "version-string": "0.1.0",
+    "dependencies": [
+        "glew",
+        "glfw3",
+        "opengl",
+        "box2d",
+        {
+            "name": "imgui",
+            "features": [
+                "glfw-binding",
+                "opengl3-binding"
+            ]
+        },
+        "implot",
+        "stb"
+    ]
+}
