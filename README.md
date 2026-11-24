@@ -49,7 +49,8 @@ Benchmarked on an NVIDIA RTX 5060 Ti.
 
 ## Development
 
-An independent passion project exploring alternatives to traditional AI architectures through biologically inspired computation. Developed with AI assistance.
+An independent passion project exploring alternatives to traditional AI architectures through biologically inspired computation.
+Developed with AI assistance (Ironic, I know, right? Crazy.)
 
 Technical feedback, criticism, and contributions are welcome.
 
