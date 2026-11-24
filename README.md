@@ -59,7 +59,7 @@ Requirements:
 - Visual Studio 2022 with C++ development tools
 - NVIDIA CUDA Toolkit 13.5
 - Windows 10 SDK
-- CUDA-compatible NVIDIA GPU
+- NVIDIA GPU with CUDA compute capability 8.0 or higher (Ampere or newer). Currently tested on the RTX 5060 Ti.
 - vcpkg with GLFW3 and GLEW (x64-windows-static-md)
 
 Open `Brain.sln` in Visual Studio, select `Release | x64`, and build the solution.
