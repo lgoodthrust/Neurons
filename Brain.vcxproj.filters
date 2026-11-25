@@ -15,8 +15,8 @@
     </Filter>
   </ItemGroup>
   <ItemGroup>
-    <ClInclude Include="code\brain.cuh">
-      <Filter>Source Files</Filter>
+    <ClInclude Include="code\audio.h">
+      <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="code\files.h">
       <Filter>Header Files</Filter>
@@ -36,38 +36,18 @@
     <ClInclude Include="code\version.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="code\audio.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
     <ClInclude Include="code\walkphys.h">
       <Filter>Header Files</Filter>
     </ClInclude>
+    <ClInclude Include="code\brain.cuh">
+      <Filter>Source Files</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
-    <CudaCompile Include="code\kernels.cu">
-      <Filter>Source Files</Filter>
-    </CudaCompile>
-    <CudaCompile Include="code\main.cu">
-      <Filter>Source Files</Filter>
-    </CudaCompile>
-    <CudaCompile Include="code\network.cu">
-      <Filter>Source Files</Filter>
-    </CudaCompile>
-    <CudaCompile Include="code\viz.cu">
-      <Filter>Source Files</Filter>
-    </CudaCompile>
-    <CudaCompile Include="code\brainfile.cu">
-      <Filter>Source Files</Filter>
-    </CudaCompile>
-    <CudaCompile Include="code\walker.cu">
-      <Filter>Source Files</Filter>
-    </CudaCompile>
-  </ItemGroup>
-  <ItemGroup>
-    <ClCompile Include="code\Audio.cpp">
+    <ClCompile Include="code\app.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
-    <ClCompile Include="code\app.cpp">
+    <ClCompile Include="code\audio.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
     <ClCompile Include="code\plotwin.cpp">
@@ -82,5 +62,25 @@
     <ClCompile Include="code\walkphys.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
+  </ItemGroup>
+  <ItemGroup>
+    <CudaCompile Include="code\brainfile.cu">
+      <Filter>Source Files</Filter>
+    </CudaCompile>
+    <CudaCompile Include="code\kernels.cu">
+      <Filter>Source Files</Filter>
+    </CudaCompile>
+    <CudaCompile Include="code\main.cu">
+      <Filter>Source Files</Filter>
+    </CudaCompile>
+    <CudaCompile Include="code\network.cu">
+      <Filter>Source Files</Filter>
+    </CudaCompile>
+    <CudaCompile Include="code\viz.cu">
+      <Filter>Source Files</Filter>
+    </CudaCompile>
+    <CudaCompile Include="code\walker.cu">
+      <Filter>Source Files</Filter>
+    </CudaCompile>
   </ItemGroup>
 </Project>

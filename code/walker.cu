@@ -12,6 +12,8 @@
 #include "walkphys.h"
 #include <cmath>
 #include <deque>
+#include <cstdio>
+#include <string>
 #include <random>
 #include <algorithm>
 
@@ -72,7 +74,7 @@ static Network build_octopus_brain(const Params& p, int n, int d_min, int d_max,
     auto mod_of = [&](int i) {                         // local index -> module 0..2
         if (i < nE) return i < W.modE[1] ? 0 : i < W.modE[2] ? 1 : 2;
         const int k = i - nE; return k < W.modI[1] ? 0 : k < W.modI[2] ? 1 : 2;
-        };
+    };
     // k distinct cells from a set of [lo, hi) ranges (local indices), never `self`
     std::vector<int> picks;
     auto pick = [&](const std::vector<std::pair<int, int>>& R, int k, int self) {
@@ -90,7 +92,7 @@ static Network build_octopus_brain(const Params& p, int n, int d_min, int d_max,
             got.erase(std::unique(got.begin(), got.end()), got.end());
         }
         picks.insert(picks.begin() + base, got.begin(), got.end());
-        };
+    };
     auto Erange = [&](int m) { return std::make_pair(W.modE[m], W.modE[m + 1]); };
     auto Irange = [&](int m) { return std::make_pair(nE + W.modI[m], nE + W.modI[m + 1]); };
 
@@ -112,11 +114,9 @@ static Network build_octopus_brain(const Params& p, int n, int d_min, int d_max,
                 std::vector<std::pair<int, int>> others;
                 for (int o = 0; o < 3; ++o) if (o != m) others.push_back(Erange(o));
                 pick(others, k - ko, i);
-            }
-            else if (m == 0) {
+            } else if (m == 0) {
                 pick({ Irange(0) }, k, i);
-            }
-            else {
+            } else {
                 std::binomial_distribution<int> Cr(k, CROSS_I);
                 const int kc = Cr(gen);
                 pick({ Irange(m) }, k - kc, i);
@@ -144,25 +144,101 @@ static Network build_octopus_brain(const Params& p, int n, int d_min, int d_max,
         for (int k = 0; k < B; ++k) net.Vb0[(size_t)c * B + k] = net.Vs0[c];
     }
     std::printf("  octopus brain: torso %d, back leg %d, front leg %d neurons; %zu synapses "
-        "(%.0f%% between modules, %lld crossed-inhibition links between the legs)\n",
-        W.modE[1] + W.modI[1], (W.modE[2] - W.modE[1]) + (W.modI[2] - W.modI[1]),
-        (W.modE[3] - W.modE[2]) + (W.modI[3] - W.modI[2]), net.nnz,
-        100.0 * (between + cross_inh) / std::max<size_t>(1, net.nnz), cross_inh);
+                "(%.0f%% between modules, %lld crossed-inhibition links between the legs)\n",
+                W.modE[1] + W.modI[1], (W.modE[2] - W.modE[1]) + (W.modI[2] - W.modI[1]),
+                (W.modE[3] - W.modE[2]) + (W.modI[3] - W.modI[2]), net.nnz,
+                100.0 * (between + cross_inh) / std::max<size_t>(1, net.nnz), cross_inh);
     return net;
 }
+
+// ---------------------------------------------------------------------------
+//  Spinal rhythm generators (octopus brains, optional): each joint's flex and extend motor groups
+//  are wired as a HALF-CENTRE OSCILLATOR, the classic spinal walking circuit (Graham Brown, 1911):
+//    - each group excites itself (a burst sustains itself)
+//    - each group drives its own pool of inhibitory cells, which silences the opposite group
+//    - the E cells' own adaptation (b = 60 pA, tau_w = 200 ms) tires the active group out, the
+//      other group escapes, and the cycle repeats: flex, extend, flex, extend
+//  Knee follows hip: the hip group that swings the foot forward (swing) excites knee FLEX (lift the
+//  foot); the hip group that pushes back (stance) excites knee EXTEND (straight leg to push on).
+//  A steady "brainstem drive" into the motor groups sets how hard the circuits run (run_walk).
+//  Tested on the CPU bench before going in: rhythm ~3 Hz per joint, knee locked to hip.
+// ---------------------------------------------------------------------------
+namespace {
+struct CpgSyn { int post, pre; float w; int d, br; };
+constexpr float CPG_W_SELF = 1.0f, CPG_W_EI = 0.8f, CPG_W_IE = 1.0f, CPG_W_HK = 0.5f;   // nS
+constexpr int   CPG_K_SELF = 20, CPG_K_EI = 20, CPG_POOL = 15, CPG_K_HK = 10;
+
+std::vector<CpgSyn> cpg_wiring(int n, int dly) {
+    const WalkLayout L = walk_layout(n, true);
+    const int nE = L.modE[3];
+    std::mt19937 g(11);
+    std::uniform_int_distribution<int> Br(0, B - 1);
+    std::vector<CpgSyn> ex;
+    auto grp  = [&](int m) { return L.motor_start[m]; };            // m = 2*joint + (0 flex, 1 extend)
+    auto pool = [&](int m) { const int mod = 1 + (m / 2) / 2; return nE + L.modI[mod] + (m % 4) * CPG_POOL; };
+    auto pick = [&](int lo, int cnt, int k, int self) {
+        std::vector<int> v; std::uniform_int_distribution<int> U(0, cnt - 1);
+        while ((int)v.size() < k) { const int x = lo + U(g); if (x != self && std::find(v.begin(), v.end(), x) == v.end()) v.push_back(x); }
+        return v;
+    };
+    for (int m = 0; m < WALK_MOTOR_GROUPS; ++m) {
+        const int opp = m ^ 1;
+        for (int i = 0; i < WALK_MOTOR_PER; ++i) {
+            const int post = grp(m) + i;
+            for (int pre : pick(grp(m), WALK_MOTOR_PER, CPG_K_SELF, post)) ex.push_back({ post, pre, CPG_W_SELF, dly, Br(g) });
+            for (int pi = 0; pi < CPG_POOL; ++pi) ex.push_back({ post, pool(opp) + pi, CPG_W_IE, dly, 0 });
+        }
+        for (int pi = 0; pi < CPG_POOL; ++pi)
+            for (int pre : pick(grp(m), WALK_MOTOR_PER, CPG_K_EI, -1)) ex.push_back({ pool(m) + pi, pre, CPG_W_EI, dly, 0 });
+    }
+    for (int leg = 0; leg < 2; ++leg)                                // joints: 0/1 back hip/knee, 2/3 front
+        for (int ph = 0; ph < 2; ++ph) {
+            const int hip = 2 * (2 * leg) + ph, knee = 2 * (2 * leg + 1) + (1 - ph);
+            for (int i = 0; i < WALK_MOTOR_PER; ++i)
+                for (int pre : pick(grp(hip), WALK_MOTOR_PER, CPG_K_HK, -1)) ex.push_back({ grp(knee) + i, pre, CPG_W_HK, dly, Br(g) });
+        }
+    return ex;
+}
+
+// merge extra synapses into a one-brain network, keeping each neuron's E inputs first
+void add_synapses(Network& a, int n, int nE, const std::vector<CpgSyn>& ex) {
+    std::vector<std::vector<CpgSyn>> per(n);
+    for (auto& s : ex) per[s.post].push_back(s);
+    Network b = a;
+    b.in_ptr.assign(1, 0); b.in_eend.assign(n, 0); b.in_pre.clear(); b.in_w.clear(); b.in_meta.clear();
+    for (int i = 0; i < n; ++i) {
+        for (int pass = 0; pass < 2; ++pass) {
+            const int q0 = pass == 0 ? a.in_ptr[i] : a.in_eend[i], q1 = pass == 0 ? a.in_eend[i] : a.in_ptr[i + 1];
+            for (int q = q0; q < q1; ++q) { b.in_pre.push_back(a.in_pre[q]); b.in_w.push_back(a.in_w[q]); b.in_meta.push_back(a.in_meta[q]); }
+            for (auto& s : per[i]) if ((s.pre < nE) == (pass == 0)) {
+                b.in_pre.push_back(s.pre); b.in_w.push_back(s.w); b.in_meta.push_back((uint16_t)(s.d | (s.br << 6)));
+            }
+            if (pass == 0) b.in_eend[i] = (int)b.in_pre.size();
+        }
+        b.in_ptr.push_back((int)b.in_pre.size());
+    }
+    b.nnz = b.in_pre.size();
+    a = std::move(b);
+}
+}  // namespace
 
 // ---------------------------------------------------------------------------
 //  Network: K identical copies of one brain, no connections between them.
 //  Global layout keeps all excitatory cells first: brain b's E cells are [b*nE, (b+1)*nE),
 //  its I cells [K*nE + b*nI, K*nE + (b+1)*nI).
 // ---------------------------------------------------------------------------
-Network build_walk_network(const Params& p, int K, int n, int d_min, int d_max, bool modular, float kE, float kI) {
+Network build_walk_network(const Params& p, int K, int n, int d_min, int d_max, bool modular, float kE, float kI, bool cpg) {
     const int nE = (int)std::lround(0.8 * n), nI = n - nE;
     std::printf("Building %d identical %s brains of %d neurons (%d E, %d I)...\n",
-        K, modular ? "octopus" : "blob", n, nE, nI);
+                K, modular ? "octopus" : "blob", n, nE, nI);
     Network one = modular ? build_octopus_brain(p, n, d_min, d_max, kE, kI)
-        : build_network(p, n, nE, nE / 4, d_min, d_max,
-            std::min(1.0, (double)kE / nE), std::min(1.0, (double)kI / nI));
+                          : build_network(p, n, nE, nE / 4, d_min, d_max,
+                                          std::min(1.0, (double)kE / nE), std::min(1.0, (double)kI / nI));
+    if (modular && cpg) {
+        const auto ex = cpg_wiring(n, d_min);
+        add_synapses(one, n, nE, ex);
+        std::printf("  spinal rhythm generators: a half-centre oscillator per joint (%zu extra synapses per brain)\n", ex.size());
+    }
     const int N = K * n, N_E = K * nE;
     auto G = [&](int b, int i) { return i < nE ? b * nE + i : N_E + b * nI + (i - nE); };
     Network net;
@@ -193,10 +269,33 @@ Network build_walk_network(const Params& p, int K, int n, int d_min, int d_max, 
 }
 
 // Dopamine for several brains at once: brain b = n / nE gets amounts[b]
+// Mutation: every synapse onto brain `dst` is scaled by exp(sigma * N(0,1)) (multiplicative, so weights
+// stay positive and a 0 stays 0), then clamped like the network's own weights (E->E at most w_max).
+// Random numbers: counter-based Philox from (synapse, seed), like the simulation's.
+__global__ void walk_mutate_kernel(const int* __restrict__ in_ptr, const int* __restrict__ in_eend,
+                                   float* __restrict__ in_w, int N, int N_E, int nE, int nI, int dst,
+                                   float sigma, unsigned seed, float w_max) {
+    const int g = blockIdx.x * blockDim.x + threadIdx.x;
+    if (g >= N) return;
+    const int b = g < N_E ? g / nE : (g - N_E) / nI;
+    if (b != dst) return;
+    const uint2 key = make_uint2(0x6D2B79F5u, seed);
+    for (int q = in_ptr[g]; q < in_ptr[g + 1]; ++q) {
+        const float w = in_w[q];
+        if (w == 0.0f) continue;
+        const uint4 r = curand_Philox4x32_10(make_uint4((unsigned)q, seed, 0xE701u, 0u), key);
+        const float u1 = ((r.x >> 8) + 1.0f) * (1.0f / 16777217.0f), u2 = (r.y >> 8) * (1.0f / 16777216.0f);
+        const float z  = sqrtf(-2.0f * __logf(u1)) * __cosf(6.2831853f * u2);   // Box-Muller: N(0,1)
+        float nw = w * __expf(sigma * z);
+        if (g < N_E && q < in_eend[g]) nw = fminf(nw, w_max);           // plastic E->E: same cap as learning
+        in_w[q] = nw;
+    }
+}
+
 __global__ void walk_reward_kernel(const int* __restrict__ in_ptr, const int* __restrict__ in_eend,
-    float* __restrict__ in_w, const float* __restrict__ elig,
-    const int* __restrict__ elig_t, int N_E, int nE, int now, float k_elig,
-    const float* __restrict__ amounts, float w_max) {
+                                   float* __restrict__ in_w, const float* __restrict__ elig,
+                                   const int* __restrict__ elig_t, int N_E, int nE, int now, float k_elig,
+                                   const float* __restrict__ amounts, float w_max) {
     const int n = blockIdx.x * blockDim.x + threadIdx.x;
     if (n >= N_E) return;
     const float a = amounts[n / nE];
@@ -224,20 +323,20 @@ __global__ void walk_reward_kernel(const int* __restrict__ in_ptr, const int* __
 #endif
 
 namespace {
-    const ImU32 kColors[8] = { IM_COL32(255, 160, 40, 255), IM_COL32(60, 200, 255, 255), IM_COL32(120, 230, 90, 255),
-                               IM_COL32(240, 90, 200, 255), IM_COL32(250, 230, 70, 255), IM_COL32(150, 130, 255, 255),
-                               IM_COL32(255, 100, 100, 255), IM_COL32(200, 200, 200, 255) };
-    ImU32 with_alpha(ImU32 c, float a) { return (c & 0x00FFFFFFu) | ((ImU32)(a * 255.f) << 24); }
+const ImU32 kColors[8] = { IM_COL32(255, 160, 40, 255), IM_COL32(60, 200, 255, 255), IM_COL32(120, 230, 90, 255),
+                           IM_COL32(240, 90, 200, 255), IM_COL32(250, 230, 70, 255), IM_COL32(150, 130, 255, 255),
+                           IM_COL32(255, 100, 100, 255), IM_COL32(200, 200, 200, 255) };
+ImU32 with_alpha(ImU32 c, float a) { return (c & 0x00FFFFFFu) | ((ImU32)(a * 255.f) << 24); }
 
-    struct Life {                       // one creature's current life and record
-        float start_x = 0.f, t = 0.f, fall_timer = -1.f, dop_rate = 0.f;
-        float expect = 0.f;             // reward per second this brain has come to expect (running average)
-        int   lives = 0, deaths = 0, since_selection = 0;
-        float last = 0.f, best = -1e9f;
-        std::deque<float> recent;       // distances of the last few lives
-        std::vector<float> history;     // distance of every life (for the graph)
-        float cmd[WALK_JOINTS] = { 0, 0, 0, 0 };
-    };
+struct Life {                       // one creature's current life and record
+    float start_x = 0.f, t = 0.f, fall_timer = -1.f, dop_rate = 0.f;
+    float expect = 0.f;             // reward per second this brain has come to expect (running average)
+    int   lives = 0, deaths = 0, since_selection = 0;
+    float last = 0.f, best = -1e9f;
+    std::deque<float> recent;       // distances of the last few lives
+    std::vector<float> history;     // distance of every life (for the graph)
+    float cmd[WALK_JOINTS] = { 0, 0, 0, 0 };
+};
 }  // namespace
 
 int run_walk(DevState& s, Params& p, int blocks, int threads, const WalkCtx& ctx) {
@@ -280,15 +379,28 @@ int run_walk(DevState& s, Params& p, int blocks, int threads, const WalkCtx& ctx
     bool  kill_back = true;             // walking backwards past kill_back_m behind the start = dead
     float kill_back_m = 1.0f;
     bool  forfeit = true;               // a death scores no forward distance (selection, graph)
-    float sensor_gain = 0.3f, motor_norm = 10.f, elig_tau = 1.0f;
+    float sensor_gain = 0.3f, motor_norm = ctx.cpg ? 150.f : 10.f, elig_tau = 1.0f;
+    float cpg_drive = 0.2f;             // steady "brainstem" drive into the motor groups (rhythm generators)
     float reflex = 3.f;                 // stretch reflex: pull of each joint back to its resting angle
     float lean = 0.0f;                  // resting hip angle (rad): posture leaning into the walk
     float alive_reward = 1.f;           // dopamine per second for staying alive and upright
     bool  surprise = true;              // dopamine = reward minus the reward the brain expects
     float expect_tau = 10.f;            // seconds over which the expectation is averaged
     bool  selection = true; int sel_lives = 3;
+    float replace_frac = 0.5f;          // share of the population replaced each generation
+    float mutation = 0.05f;             // mutation strength: typical relative change per synapse
+    int   generation = 0;
     int   follow = -1;                  // -1 = the creature furthest ahead
     std::deque<std::string> log;
+    // run record, written when the window closes (results.cpp plots it as walking.png)
+    std::vector<float> rec_lives;       // per life: brain, life number, time at end (s), distance (m), died
+    std::vector<float> rec_dop;         // every simulated second: time, then each brain's dopamine/s
+    std::vector<float> rec_events;      // natural selection: time, replaced brain, copied brain
+    double next_dop_sample = 0.0;
+    // saving the population
+    char save_name[64];
+    std::snprintf(save_name, sizeof(save_name), "%s", ctx.name.c_str());
+    std::string save_msg;
     double sim_t = 0.0;
     int step = 0;
     const float TICK = 0.01f;           // control tick: 10 ms of brain, then 10 ms of physics
@@ -305,18 +417,19 @@ int run_walk(DevState& s, Params& p, int blocks, int threads, const WalkCtx& ctx
         L.recent.push_back(L.last);
         while ((int)L.recent.size() > sel_lives) L.recent.pop_front();
         L.history.push_back(L.last);
-        };
+        rec_lives.insert(rec_lives.end(), { (float)b, (float)L.lives, (float)sim_t, L.last, fell ? 1.f : 0.f });
+    };
     auto new_life = [&](int b) {
         world.reset(b);
         Life& L = life[b];
         L.start_x = world.state(b).x; L.t = 0.f; L.fall_timer = -1.f;
         for (float& c : L.cmd) c = 0.f;
-        };
+    };
     auto copy_brain = [&](int src, int dst) {           // dst's synapse strengths := src's
         auto seg = [&](int b, bool exc, size_t& q0, size_t& len) {
             const int g0 = exc ? b * nE : N_E + b * nI, g1 = exc ? (b + 1) * nE : N_E + (b + 1) * nI;
             q0 = (size_t)h_in_ptr[g0]; len = (size_t)(h_in_ptr[g1] - h_in_ptr[g0]);
-            };
+        };
         for (int e = 0; e < 2; ++e) {
             size_t qs, ls, qd, ld;
             seg(src, e == 0, qs, ls); seg(dst, e == 0, qd, ld);
@@ -324,7 +437,7 @@ int run_walk(DevState& s, Params& p, int blocks, int threads, const WalkCtx& ctx
             CUDA_CHECK(cudaMemcpy(s.in_w + qd, s.in_w + qs, ls * sizeof(float), cudaMemcpyDeviceToDevice));
             CUDA_CHECK(cudaMemset(s.elig + qd, 0, ld * sizeof(float)));
         }
-        };
+    };
 
     auto tick = [&]() {
         // 1. senses -> sensory neurons (push-pull pairs of groups)
@@ -353,6 +466,9 @@ int run_walk(DevState& s, Params& p, int blocks, int threads, const WalkCtx& ctx
                 float* o = out + lay.sense_start[22 + leg];
                 for (int i = 0; i < WALK_SENSE_PER; ++i) o[i] = st.foot_down[leg] ? sensor_gain : 0.f;
             }
+            if (ctx.cpg)                                     // brainstem drive: how hard the rhythm runs
+                for (int m = 0; m < WALK_MOTOR_GROUPS; ++m)
+                    for (int i = 0; i < WALK_MOTOR_PER; ++i) out[lay.motor_start[m] + i] = cpg_drive;
         }
         CUDA_CHECK(cudaMemcpy(s.eye, sense.data(), sense.size() * sizeof(float), cudaMemcpyHostToDevice));
         // 2. 10 ms of brain
@@ -386,6 +502,11 @@ int run_walk(DevState& s, Params& p, int blocks, int threads, const WalkCtx& ctx
         // 4. 10 ms of physics
         world.step(TICK);
         sim_t += TICK;
+        if (sim_t >= next_dop_sample) {
+            rec_dop.push_back((float)sim_t);
+            for (int b = 0; b < K; ++b) rec_dop.push_back(life[b].dop_rate);
+            next_dop_sample += 1.0;
+        }
         // 5. dopamine, falls, lives
         bool any = false;
         for (int b = 0; b < K; ++b) {
@@ -395,20 +516,18 @@ int run_walk(DevState& s, Params& p, int blocks, int threads, const WalkCtx& ctx
             if (L.fall_timer >= 0.f) {                       // lying on the ground, about to stand up
                 L.fall_timer -= TICK;
                 if (L.fall_timer < 0.f) new_life(b);
-            }
-            else {
+            } else {
                 const float d = st.vx >= 0.f ? st.vx : back_mult * st.vx;
                 const float r = reward_gain * d + alive_reward;   // reward right now, per second
                 if (surprise) {                                   // dopamine signals the surprise
                     a = (r - L.expect) * TICK;
                     L.expect += (TICK / expect_tau) * (r - L.expect);
-                }
-                else {
+                } else {
                     a = r * TICK;
                 }
                 L.t += TICK;
                 const bool dead = st.fallen || std::fabs(st.angle) > death_tilt * 0.0174533f
-                    || (kill_back && st.x - L.start_x < -kill_back_m);
+                               || (kill_back && st.x - L.start_x < -kill_back_m);
                 if (dead) { a -= fall_penalty; end_life(b, true); L.fall_timer = 0.5f; }
                 else if (L.t >= life_len) { end_life(b, false); new_life(b); }
             }
@@ -418,32 +537,46 @@ int run_walk(DevState& s, Params& p, int blocks, int threads, const WalkCtx& ctx
         }
         if (any) {
             CUDA_CHECK(cudaMemcpy(d_amt, amounts.data(), K * sizeof(float), cudaMemcpyHostToDevice));
-            walk_reward_kernel << <(N_E + 127) / 128, 128 >> > (s.in_ptr, s.in_eend, s.in_w, s.elig, s.elig_t, N_E, nE,
-                step, p.k_elig, d_amt, p.w_max);
+            walk_reward_kernel<<<(N_E + 127) / 128, 128>>>(s.in_ptr, s.in_eend, s.in_w, s.elig, s.elig_t, N_E, nE,
+                                                            step, p.k_elig, d_amt, p.w_max);
         }
-        // 6. natural selection: once every creature has lived sel_lives times since the last round
+        // 6. evolution: once every creature has lived sel_lives times since the last generation, rank them
+        //    by mean distance over those lives; the weakest share is replaced by mutated copies of the
+        //    strongest (parents dealt out in rank order); the survivors carry on unchanged (elitism).
         if (selection && K > 1) {
             bool ready = true;
             for (int b = 0; b < K; ++b) ready = ready && life[b].since_selection >= sel_lives;
             if (ready) {
-                int best = 0, worst = 0;
+                ++generation;
                 auto score = [&](int b) { double s2 = 0; for (float d : life[b].recent) s2 += d; return s2 / std::max<size_t>(1, life[b].recent.size()); };
-                for (int b = 1; b < K; ++b) { if (score(b) > score(best)) best = b; if (score(b) < score(worst)) worst = b; }
-                char msg[160];
-                if (best != worst && score(best) - score(worst) > 0.05) {
-                    copy_brain(best, worst);
-                    std::snprintf(msg, sizeof(msg), "t=%.0fs: brain %d (%.2f m) replaced by a copy of brain %d (%.2f m)",
-                        sim_t, worst + 1, score(worst), best + 1, score(best));
+                std::vector<int> rank(K);
+                for (int b = 0; b < K; ++b) rank[b] = b;
+                std::stable_sort(rank.begin(), rank.end(), [&](int a, int c) { return score(a) > score(c); });
+                const int n_rep = std::max(1, std::min(K - 1, (int)std::lround(replace_frac * K)));
+                const int n_keep = K - n_rep;
+                std::vector<double> sc(K); for (int b = 0; b < K; ++b) sc[b] = score(b);
+                for (int i = 0; i < n_rep; ++i) {
+                    const int dst = rank[K - 1 - i], src = rank[i % n_keep];
+                    copy_brain(src, dst);
+                    if (mutation > 0.f) {
+                        const unsigned seed = 0x9E3779B9u * (unsigned)generation + 7919u * (unsigned)dst + 1u;
+                        walk_mutate_kernel<<<(N + 255) / 256, 256>>>(s.in_ptr, s.in_eend, s.in_w, N, N_E, nE, nI,
+                                                                     dst, mutation, seed, p.w_max);
+                        CUDA_CHECK(cudaGetLastError());
+                    }
+                    rec_events.insert(rec_events.end(), { (float)sim_t, (float)dst, (float)src });
+                    life[dst].recent.clear();                    // the child is judged on its own lives
+                    new_life(dst);
+                    char msg[200];
+                    std::snprintf(msg, sizeof(msg), "gen %d: brain %d (%.2f m) <- %s copy of brain %d (%.2f m)",
+                                  generation, dst + 1, sc[dst], mutation > 0.f ? "mutated" : "exact", src + 1, sc[src]);
+                    log.push_front(msg);
                 }
-                else {
-                    std::snprintf(msg, sizeof(msg), "t=%.0fs: all brains about equal, no replacement", sim_t);
-                }
-                log.push_front(msg);
                 while (log.size() > 8) log.pop_back();
                 for (int b = 0; b < K; ++b) life[b].since_selection = 0;
             }
         }
-        };
+    };
 
     for (int b = 0; b < K; ++b) new_life(b);
     double last = glfwGetTime(), sim_debt = 0.0, rt_meas = 0.0, rt_t0 = glfwGetTime(), rt_s0 = 0.0;
@@ -459,8 +592,7 @@ int run_walk(DevState& s, Params& p, int blocks, int threads, const WalkCtx& ctx
         if (fast) {
             const double until = now + 0.030;               // fill ~30 ms per frame
             while (glfwGetTime() < until) tick();
-        }
-        else {
+        } else {
             sim_debt = std::min(sim_debt + frame * speed, 0.2);
             const double budget_end = now + 0.030;
             while (sim_debt >= TICK && glfwGetTime() < budget_end) { tick(); sim_debt -= TICK; }
@@ -514,7 +646,8 @@ int run_walk(DevState& s, Params& p, int blocks, int threads, const WalkCtx& ctx
         ImGui::SetNextWindowPos(ImVec2(10, 10), ImGuiCond_FirstUseEver);
         ImGui::SetNextWindowSize(ImVec2(470, 0), ImGuiCond_FirstUseEver);
         ImGui::Begin("Walker school");
-        ImGui::Text("%s brains", ctx.modular ? "Octopus (torso + leg modules)" : "Blob");
+        ImGui::Text("%s brains%s", ctx.modular ? "Octopus (torso + leg modules)" : "Blob",
+                    ctx.cpg ? " + spinal rhythm generators" : "");
         ImGui::Text("%d brains x %d neurons   simulated %.0f s   (%.1fx real time)", K, n, sim_t, rt_meas);
         ImGui::SliderFloat("Speed", &speed, 0.25f, 8.f, "%.2fx", ImGuiSliderFlags_Logarithmic);
         ImGui::SameLine(); ImGui::Checkbox("Fast-forward", &fast);
@@ -539,11 +672,35 @@ int run_walk(DevState& s, Params& p, int blocks, int threads, const WalkCtx& ctx
         ImGui::SliderFloat("Sensor strength", &sensor_gain, 0.05f, 1.f, "%.2f");
         ImGui::SliderFloat("Stretch reflex", &reflex, 0.f, 10.f, "%.1f");
         ImGui::SliderFloat("Posture lean", &lean, -0.4f, 0.4f, "%.2f rad");
-        ImGui::SliderFloat("Muscle sensitivity", &motor_norm, 2.f, 40.f, "%.0f Hz = full", ImGuiSliderFlags_Logarithmic);
-        ImGui::SeparatorText("Natural selection");
-        ImGui::Checkbox("Replace the worst brain with a copy of the best", &selection);
-        ImGui::SliderInt("Lives per round", &sel_lives, 1, 10);
+        ImGui::SliderFloat("Muscle sensitivity", &motor_norm, 2.f, 400.f, "%.0f Hz = full", ImGuiSliderFlags_Logarithmic);
+        if (ctx.cpg) {
+            ImGui::SliderFloat("Rhythm drive", &cpg_drive, 0.f, 0.6f, "%.2f");
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Steady 'brainstem' input to the spinal rhythm generators.\n"
+                                                          "Too low: no rhythm. Higher: stronger, faster stepping.");
+        }
+        ImGui::SeparatorText("Evolution");
+        ImGui::Checkbox("Weakest are replaced by mutated copies of the strongest", &selection);
+        ImGui::SliderInt("Lives per generation", &sel_lives, 1, 10);
+        { float pct = replace_frac * 100.f;
+          if (ImGui::SliderFloat("Replaced each generation", &pct, 10.f, 90.f, "%.0f%%")) replace_frac = pct / 100.f; }
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Share of the population replaced (at least 1, at most all but the best)");
+        { float pct = mutation * 100.f;
+          if (ImGui::SliderFloat("Mutation strength", &pct, 0.f, 30.f, "%.1f%%")) mutation = pct / 100.f; }
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Typical change to each synapse of a child. 0 = exact copies.");
+        ImGui::Text("Generation %d", generation);
         for (const auto& m : log) ImGui::TextDisabled("%s", m.c_str());
+        ImGui::SeparatorText("Brain file");
+        ImGui::SetNextItemWidth(200);
+        ImGui::InputText("##walkname", save_name, sizeof(save_name));
+        ImGui::SameLine();
+        if (ImGui::Button("Save brains")) {
+            std::string name(save_name);
+            if (name.empty()) name = "walkers";
+            const int tag[4] = { K, n, ctx.modular ? 1 : 0, ctx.cpg ? 1 : 0 };
+            save_brain("brains/" + name + ".brain", s, p, ctx.nnz, 0, nullptr, ctx.age_s + sim_t, save_msg, tag);
+        }
+        ImGui::TextDisabled("Saves all %d brains (closing does not save)", K);
+        if (!save_msg.empty()) ImGui::TextWrapped("%s", save_msg.c_str());
         ImGui::SeparatorText("Creatures");
         ImGui::RadioButton("Follow the leader", &follow, -1);
         if (ImGui::BeginTable("cr", 7, ImGuiTableFlags_SizingFixedFit | ImGuiTableFlags_RowBg)) {
@@ -589,6 +746,26 @@ int run_walk(DevState& s, Params& p, int blocks, int threads, const WalkCtx& ctx
     }
     CUDA_CHECK(cudaDeviceSynchronize());
     cudaFree(d_amt);
+    // ---- write the run record for the results figure ----
+    {
+        auto wbin = [](const char* name, const std::vector<float>& v) {
+            if (FILE* f = std::fopen(name, "wb")) { if (!v.empty()) std::fwrite(v.data(), sizeof(float), v.size(), f); std::fclose(f); }
+        };
+        wbin("walk_lives.bin", rec_lives);
+        wbin("walk_dopamine.bin", rec_dop);
+        wbin("walk_events.bin", rec_events);
+        if (FILE* f = std::fopen("meta.txt", "w")) {
+            std::fprintf(f, "version 3\nwalk 1\nbrains %d\nn %d\nmodular %d\nsim_s %.3f\nage_s %.3f\ndt %g\nsyn %g\n"
+                            "reward %g\nback_mult %g\nalive %g\nsurprise %d\ndeath_penalty %g\ndeath_tilt %g\n"
+                            "life_len %g\nreflex %g\nlean %g\nmuscle_hz %g\nselection %d\ngenerations %d\nmutation %g\nreplace_frac %g\n"
+                            "cpg %d\ncpg_drive %g\n",
+                         K, n, ctx.modular ? 1 : 0, sim_t, ctx.age_s, p.dt, p.k_local, reward_gain, back_mult,
+                         alive_reward, surprise ? 1 : 0, fall_penalty, death_tilt, life_len, reflex, lean, motor_norm,
+                         selection ? 1 : 0, generation, mutation, replace_frac, ctx.cpg ? 1 : 0, cpg_drive);
+            std::fclose(f);
+        }
+        std::printf("Walkers: %.0f s simulated, %zu lives. Wrote meta.txt and walk_*.bin\n", sim_t, rec_lives.size() / 5);
+    }
     ImGui_ImplOpenGL3_Shutdown();
     ImGui_ImplGlfw_Shutdown();
     ImPlot::DestroyContext();

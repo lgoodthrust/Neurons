@@ -26,66 +26,66 @@
 #endif
 
 namespace {
-    // ------------------------------- ears -------------------------------
-    const int FFT_N = 4096, RING = 8192;                 // ~85 ms window, ~12 Hz resolution; RING must be a power of two
-    IAudioClient* g_ac = nullptr;
-    IAudioCaptureClient* g_cc = nullptr;
-    bool  g_com = false, g_float = true;
-    int   g_ch = 2, g_bits = 32, g_rate = 48000;
-    std::vector<float> g_ring(RING, 0.0f), g_prev;
-    size_t g_rpos = 0;
+// ------------------------------- ears -------------------------------
+const int FFT_N = 4096, RING = 8192;                 // ~85 ms window, ~12 Hz resolution; RING must be a power of two
+IAudioClient*        g_ac = nullptr;
+IAudioCaptureClient* g_cc = nullptr;
+bool  g_com = false, g_float = true;
+int   g_ch = 2, g_bits = 32, g_rate = 48000;
+std::vector<float> g_ring(RING, 0.0f), g_prev;
+size_t g_rpos = 0;
 
-    void pull_audio() {
-        if (!g_cc) return;
-        UINT32 packet = 0;
-        while (SUCCEEDED(g_cc->GetNextPacketSize(&packet)) && packet > 0) {
-            BYTE* data = nullptr; UINT32 frames = 0; DWORD flags = 0;
-            if (FAILED(g_cc->GetBuffer(&data, &frames, &flags, nullptr, nullptr))) break;
-            const bool silent = (flags & AUDCLNT_BUFFERFLAGS_SILENT) != 0;
-            for (UINT32 i = 0; i < frames; ++i) {
-                float v = 0.0f;
-                if (!silent) {
-                    for (int c = 0; c < g_ch; ++c) {
-                        if (g_float)          v += reinterpret_cast<const float*>(data)[(size_t)i * g_ch + c];
-                        else if (g_bits == 16) v += reinterpret_cast<const short*>(data)[(size_t)i * g_ch + c] / 32768.0f;
-                    }
-                    v /= (float)g_ch;                      // mix down to mono
+void pull_audio() {
+    if (!g_cc) return;
+    UINT32 packet = 0;
+    while (SUCCEEDED(g_cc->GetNextPacketSize(&packet)) && packet > 0) {
+        BYTE* data = nullptr; UINT32 frames = 0; DWORD flags = 0;
+        if (FAILED(g_cc->GetBuffer(&data, &frames, &flags, nullptr, nullptr))) break;
+        const bool silent = (flags & AUDCLNT_BUFFERFLAGS_SILENT) != 0;
+        for (UINT32 i = 0; i < frames; ++i) {
+            float v = 0.0f;
+            if (!silent) {
+                for (int c = 0; c < g_ch; ++c) {
+                    if (g_float)          v += reinterpret_cast<const float*>(data)[(size_t)i * g_ch + c];
+                    else if (g_bits == 16) v += reinterpret_cast<const short*>(data)[(size_t)i * g_ch + c] / 32768.0f;
                 }
-                g_ring[g_rpos++ & (RING - 1)] = v;
+                v /= (float)g_ch;                      // mix down to mono
             }
-            g_cc->ReleaseBuffer(frames);
+            g_ring[g_rpos++ & (RING - 1)] = v;
+        }
+        g_cc->ReleaseBuffer(frames);
+    }
+}
+
+void fft(std::vector<std::complex<float>>& a) {      // in-place radix-2
+    const int n = (int)a.size();
+    for (int i = 1, j = 0; i < n; ++i) {
+        int bit = n >> 1;
+        for (; j & bit; bit >>= 1) j ^= bit;
+        j ^= bit;
+        if (i < j) std::swap(a[i], a[j]);
+    }
+    for (int len = 2; len <= n; len <<= 1) {
+        const float ang = -6.28318530718f / len;
+        const std::complex<float> wl(std::cos(ang), std::sin(ang));
+        for (int i = 0; i < n; i += len) {
+            std::complex<float> w(1.0f, 0.0f);
+            for (int k = 0; k < len / 2; ++k) {
+                const std::complex<float> u = a[i + k], v = a[i + k + len / 2] * w;
+                a[i + k] = u + v; a[i + k + len / 2] = u - v;
+                w *= wl;
+            }
         }
     }
+}
 
-    void fft(std::vector<std::complex<float>>& a) {      // in-place radix-2
-        const int n = (int)a.size();
-        for (int i = 1, j = 0; i < n; ++i) {
-            int bit = n >> 1;
-            for (; j & bit; bit >>= 1) j ^= bit;
-            j ^= bit;
-            if (i < j) std::swap(a[i], a[j]);
-        }
-        for (int len = 2; len <= n; len <<= 1) {
-            const float ang = -6.28318530718f / len;
-            const std::complex<float> wl(std::cos(ang), std::sin(ang));
-            for (int i = 0; i < n; i += len) {
-                std::complex<float> w(1.0f, 0.0f);
-                for (int k = 0; k < len / 2; ++k) {
-                    const std::complex<float> u = a[i + k], v = a[i + k + len / 2] * w;
-                    a[i + k] = u + v; a[i + k + len / 2] = u - v;
-                    w *= wl;
-                }
-            }
-        }
-    }
-
-    // ------------------------------- mouth -------------------------------
-    const int MB = 4, MLEN = 1024, MRATE = 48000;        // 4 blocks of ~21 ms queued (~85 ms latency)
-    HWAVEOUT g_wo = nullptr;
-    WAVEHDR  g_hdr[MB];
-    std::vector<short> g_buf[MB];
-    bool g_queued[MB];
-    std::vector<float> m_phase, m_amp;
+// ------------------------------- mouth -------------------------------
+const int MB = 4, MLEN = 1024, MRATE = 48000;        // 4 blocks of ~21 ms queued (~85 ms latency)
+HWAVEOUT g_wo = nullptr;
+WAVEHDR  g_hdr[MB];
+std::vector<short> g_buf[MB];
+bool g_queued[MB];
+std::vector<float> m_phase, m_amp;
 }  // namespace
 
 bool ears_start() {
@@ -93,7 +93,7 @@ bool ears_start() {
     g_com = SUCCEEDED(hc);                           // RPC_E_CHANGED_MODE: COM already set up, still usable
     IMMDeviceEnumerator* en = nullptr;
     if (FAILED(CoCreateInstance(__uuidof(MMDeviceEnumerator), nullptr, CLSCTX_ALL,
-        __uuidof(IMMDeviceEnumerator), (void**)&en))) return false;
+                                __uuidof(IMMDeviceEnumerator), (void**)&en))) return false;
     IMMDevice* dev = nullptr;
     const HRESULT hd = en->GetDefaultAudioEndpoint(eRender, eConsole, &dev);   // what the speakers play
     en->Release();
@@ -106,7 +106,7 @@ bool ears_start() {
     g_ch = wf->nChannels; g_bits = wf->wBitsPerSample; g_rate = (int)wf->nSamplesPerSec;
     g_float = wf->wFormatTag == WAVE_FORMAT_IEEE_FLOAT || (wf->wFormatTag == WAVE_FORMAT_EXTENSIBLE && g_bits == 32);
     const HRESULT hi = g_ac->Initialize(AUDCLNT_SHAREMODE_SHARED, AUDCLNT_STREAMFLAGS_LOOPBACK,
-        2000000 /* 200 ms buffer */, 0, wf, nullptr);
+                                        2000000 /* 200 ms buffer */, 0, wf, nullptr);
     CoTaskMemFree(wf);
     if (FAILED(hi) || FAILED(g_ac->GetService(__uuidof(IAudioCaptureClient), (void**)&g_cc))) { ears_stop(); return false; }
     if (FAILED(g_ac->Start())) { ears_stop(); return false; }
@@ -140,7 +140,7 @@ void ears_bands(float* bands, int nb, float fmin, float fmax) {
         for (int k = k0; k < k1; ++k) e += std::norm(a[k]);
         e /= (float)(k1 - k0) * full;
         const float db = 10.0f * std::log10(e + 1e-12f);              // 0 dB = full scale
-        const float v = std::min(1.0f, std::max(0.0f, (db + 60.0f) / 60.0f));   // -60..0 dB -> 0..1
+        const float v  = std::min(1.0f, std::max(0.0f, (db + 60.0f) / 60.0f));   // -60..0 dB -> 0..1
         g_prev[b] = std::max(v, g_prev[b] * 0.85f);                   // fast attack, ~0.1 s release
         bands[b] = g_prev[b];
     }
@@ -180,7 +180,7 @@ void mouth_update(const float* amp, int nb, float fmin, float fmax, float volume
         for (int b = 0; b < nb; ++b) {
             const float a0 = m_amp[b], a1 = amp[b];                          // ramp: no clicks
             if (a0 < 1e-4f && a1 < 1e-4f) { m_amp[b] = a1; continue; }
-            const float f = fmin * std::pow(fmax / fmin, (b + 0.5f) / nb);
+            const float f   = fmin * std::pow(fmax / fmin, (b + 0.5f) / nb);
             const float dph = 6.28318530718f * f / MRATE;
             float ph = m_phase[b];
             for (int i = 0; i < MLEN; ++i) {

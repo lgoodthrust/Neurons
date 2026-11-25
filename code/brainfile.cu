@@ -26,6 +26,8 @@ struct Header {
     uint64_t nnz, layout_n;
     double   age_s;                // simulated seconds this brain has lived
     uint32_t reserved[16];         // [0] time step (float bits, 0 = old file: 0.1 ms), [1] synapse setting (0 = old: 160)
+                                   // [2] walker creatures, [3] neurons per brain, [4] octopus, [5] rhythm generators
+                                   // (all 0 = not a walker file)
 };
 
 template <class T> bool put(std::ofstream& f, const std::vector<T>& v) {
@@ -52,6 +54,7 @@ void header_extras(const Header& h, BrainInfo& info) {
     std::memcpy(&dt, &h.reserved[0], 4); std::memcpy(&syn, &h.reserved[1], 4);
     info.dt = dt > 0.f ? dt : 0.1f;                       // files from before v9.2
     info.syn = syn > 0.f ? syn : 160.f;
+    info.walk_K = (int)h.reserved[2]; info.walk_n = (int)h.reserved[3]; info.walk_mod = (int)h.reserved[4]; info.walk_cpg = (int)h.reserved[5];
 }
 }  // namespace
 
@@ -102,7 +105,7 @@ bool load_brain(const std::string& path, Network& net, BrainInfo& info, std::str
 // Writes a brain held on the host: net.in_* lists and weights, net.Vs0/Vb0 = current voltages,
 // net.st_* = the rest of the state, net.xyzt = layout (may be empty).
 bool write_brain_file(const std::string& path, const Network& net, int N, int N_E, int N_A, int senses,
-                      double age_s, std::string& msg, float dt, float syn) {
+                      double age_s, std::string& msg, float dt, float syn, const int* walk) {
     const auto t0 = std::chrono::high_resolution_clock::now();
     std::error_code ec;
     const std::filesystem::path fp(path);
@@ -114,6 +117,7 @@ bool write_brain_file(const std::string& path, const Network& net, int N, int N_
     h.N = N; h.N_E = N_E; h.N_A = N_A; h.B = B; h.senses = senses; h.anatomy = net.xyzt.empty() ? 0 : 1;
     h.nnz = net.in_pre.size(); h.layout_n = net.xyzt.size(); h.age_s = age_s;
     std::memcpy(&h.reserved[0], &dt, 4); std::memcpy(&h.reserved[1], &syn, 4);
+    if (walk) { h.reserved[2] = (uint32_t)walk[0]; h.reserved[3] = (uint32_t)walk[1]; h.reserved[4] = (uint32_t)walk[2]; h.reserved[5] = (uint32_t)walk[3]; }
 
     const std::string tmp = path + ".tmp";               // write to a temp file, then swap it in
     {
@@ -145,7 +149,7 @@ bool write_brain_file(const std::string& path, const Network& net, int N, int N_
 
 // Saves the brain running on the GPU
 bool save_brain(const std::string& path, const DevState& s, const Params& p, size_t nnz, int senses,
-                const std::vector<float>* layout, double age_s, std::string& msg) {
+                const std::vector<float>* layout, double age_s, std::string& msg, const int* walk) {
     const size_t N = (size_t)p.N;
     CUDA_CHECK(cudaDeviceSynchronize());
     Network net;
@@ -157,16 +161,21 @@ bool save_brain(const std::string& path, const DevState& s, const Params& p, siz
     net.Vb0 = dev_download(s.Vb, N * B); net.st_g_ampa = dev_download(s.g_ampa, N * B);
     net.st_n_r = dev_download(s.n_r, N * B); net.st_n_d = dev_download(s.n_d, N * B);
     if (layout) net.xyzt = *layout;
-    return write_brain_file(path, net, p.N, p.N_E, p.N_A, senses, age_s, msg, p.dt, p.k_local);
+    return write_brain_file(path, net, p.N, p.N_E, p.N_A, senses, age_s, msg, p.dt, p.k_local, walk);
 }
 
 // ---- for the menu (sim.h): list saved brains with a one-line summary each ----
-std::vector<std::string> list_brains(std::vector<std::string>* summaries) {
+std::vector<std::string> list_brains(std::vector<std::string>* summaries, int which) {
     std::vector<std::string> out;
     std::error_code ec;
     if (!std::filesystem::is_directory("brains", ec)) return out;
     for (const auto& e : std::filesystem::directory_iterator("brains", ec)) {
         if (!e.is_regular_file() || e.path().extension() != ".brain") continue;
+        if (which) {                                       // 1 = live-view brains only, 2 = walkers only
+            BrainInfo bi; std::string err;
+            if (!read_brain_header(e.path().string(), bi, err)) continue;
+            if ((which == 2) != (bi.walk_K > 0)) continue;
+        }
         out.push_back(e.path().string());
     }
     std::sort(out.begin(), out.end());
@@ -175,7 +184,11 @@ std::vector<std::string> list_brains(std::vector<std::string>* summaries) {
         for (const auto& path : out) {
             BrainInfo bi; std::string err;
             char buf[256];
-            if (read_brain_header(path, bi, err)) {
+            if (read_brain_header(path, bi, err) && bi.walk_K > 0) {
+                std::snprintf(buf, sizeof(buf), "%d %s%s walkers x %d neurons, %.1f min of experience, %.0f MB, dt %g ms, %.0f syn",
+                              bi.walk_K, bi.walk_mod ? "octopus" : "blob", bi.walk_cpg ? " + rhythm" : "", bi.walk_n, bi.age_s / 60.0,
+                              (double)std::filesystem::file_size(path, ec) / 1048576.0, bi.dt, bi.syn);
+            } else if (read_brain_header(path, bi, err)) {
                 const char* kind = bi.anatomy ? "sound anatomy"
                                  : (bi.senses & SENSE_EYES) ? "eyes" : bi.senses ? "senses" : "plain";
                 std::snprintf(buf, sizeof(buf), "%d neurons, %s, %.1f min of experience, %.0f MB, dt %g ms, %.0f syn",

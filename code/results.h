@@ -8,5 +8,7 @@ void plot_run(const std::string& folder, bool show_window = true);
 void analyze_seq(const std::string& folder, bool show_window = true);
 // Frequency task: response to each tone before vs after training; saves frequency.png.
 void analyze_tone(const std::string& folder, bool show_window = true);
+// Walking creatures: distance, survival and dopamine over the run; saves walking.png.
+void analyze_walk(const std::string& folder, bool show_window = true);
 // Plot whatever the latest output is (sequence run or normal run).
 void plot_latest(const std::string& folder);

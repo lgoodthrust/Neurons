@@ -539,10 +539,135 @@ void analyze_tone(const std::string& folder, bool show_window) {
     if (show_window) plot_window("Brain - frequency task", 1600, 1000, draw, "frequency.png");
 }
 
+// =============================================================================
+//  Walking creatures: distance, survival and dopamine over the run (walking.png)
+// =============================================================================
+void analyze_walk(const std::string& folder, bool show_window) {
+    const KV meta = read_kv(P(folder, "meta.txt"));
+    if ((int)kv(meta, "walk", 0) != 1) { std::printf("The latest output is not a walking-creatures run.\n"); return; }
+    const int K = (int)kv(meta, "brains"), n = (int)kv(meta, "n");
+    const bool octo = kv(meta, "modular", 0) != 0;
+    const double sim_s = kv(meta, "sim_s"), age_s = kv(meta, "age_s", 0);
+    const auto lives = read_bin<float>(P(folder, "walk_lives.bin"));      // brain, life, t, dist, died
+    const auto dop   = read_bin<float>(P(folder, "walk_dopamine.bin"));   // t, then K values
+    const auto ev    = read_bin<float>(P(folder, "walk_events.bin"));     // t, replaced, copied
+    if (K < 1 || lives.size() % 5 || dop.size() % (size_t)(K + 1) || ev.size() % 3) {
+        std::printf("Walking-creature files are missing or incomplete.\n"); return;
+    }
+    static const ImVec4 COL[8] = { ImVec4(1.00f, 0.63f, 0.16f, 1), ImVec4(0.24f, 0.78f, 1.00f, 1), ImVec4(0.47f, 0.90f, 0.35f, 1),
+                                   ImVec4(0.94f, 0.35f, 0.78f, 1), ImVec4(0.98f, 0.90f, 0.27f, 1), ImVec4(0.59f, 0.51f, 1.00f, 1),
+                                   ImVec4(1.00f, 0.39f, 0.39f, 1), ImVec4(0.78f, 0.78f, 0.78f, 1) };
+    const int NL = (int)(lives.size() / 5);
+    // per brain: life number, distance, rolling mean; survival per block of 10 lives
+    std::vector<std::vector<double>> lx(K), ly(K), rm(K), sx(K), sy(K);
+    std::vector<double> all_t, all_d, all_rm_t, all_rm;
+    int deaths = 0, best_b = -1; double best_d = -1e9;
+    for (int i = 0; i < NL; ++i) {
+        const int b = (int)lives[5 * i]; if (b < 0 || b >= K) continue;
+        lx[b].push_back(lives[5 * i + 1]); ly[b].push_back(lives[5 * i + 3]);
+        all_t.push_back(lives[5 * i + 2] / 60.0); all_d.push_back(lives[5 * i + 3]);
+        deaths += lives[5 * i + 4] > 0.5f;
+        if (lives[5 * i + 3] > best_d) { best_d = lives[5 * i + 3]; best_b = b; }
+    }
+    const int W = std::max(5, std::min(25, NL / std::max(1, 10 * K)));     // rolling-mean window (lives)
+    for (int b = 0; b < K; ++b) {
+        const auto& y = ly[b];
+        for (size_t i = 0; i < y.size(); ++i) {
+            const size_t a = i + 1 >= (size_t)W ? i + 1 - W : 0;
+            double s = 0; for (size_t j = a; j <= i; ++j) s += y[j];
+            rm[b].push_back(s / (double)(i - a + 1));
+        }
+        int alive = 0, cnt = 0;                                           // % of lives survived, per 10 lives
+        for (int i = 0; i < NL; ++i) {
+            if ((int)lives[5 * i] != b) continue;
+            alive += lives[5 * i + 4] < 0.5f; ++cnt;
+            if (cnt == 10) { sx[b].push_back(lives[5 * i + 1]); sy[b].push_back(10.0 * alive); alive = 0; cnt = 0; }
+        }
+    }
+    {   // population trend over time: rolling mean over the last W*K lives
+        const int Wa = W * std::max(1, K);
+        for (size_t i = 0; i < all_d.size(); ++i) {
+            const size_t a = i + 1 >= (size_t)Wa ? i + 1 - Wa : 0;
+            double s = 0; for (size_t j = a; j <= i; ++j) s += all_d[j];
+            all_rm_t.push_back(all_t[i]); all_rm.push_back(s / (double)(i - a + 1));
+        }
+    }
+    const int ND = (int)(dop.size() / (K + 1));
+    std::vector<double> dt_min(ND); std::vector<std::vector<double>> dv(K, std::vector<double>(ND));
+    for (int i = 0; i < ND; ++i) {
+        dt_min[i] = dop[(size_t)i * (K + 1)] / 60.0;
+        for (int b = 0; b < K; ++b) dv[b][i] = dop[(size_t)i * (K + 1) + 1 + b];
+    }
+    std::vector<double> ev_t; for (size_t i = 0; i + 2 < ev.size(); i += 3) ev_t.push_back(ev[i] / 60.0);
+    // first vs last quarter of all lives: is the population getting better?
+    double q1 = 0, q4 = 0; int nq = NL / 4;
+    for (int i = 0; i < nq; ++i) { q1 += all_d[i]; q4 += all_d[NL - nq + i]; }
+    if (nq > 0) { q1 /= nq; q4 /= nq; }
+    char head[480];
+    std::snprintf(head, sizeof(head),
+        "Walking creatures: %d %s%s brains x %d neurons  |  %.1f min simulated (%.1f min total experience)  |  %d lives, %.0f%% died  |  "
+        "best life %+.2f m (brain %d)  |  mean distance, first quarter of lives %+.2f m -> last quarter %+.2f m  |  "
+        "%d generations, mutation %.1f%%",
+        K, octo ? "octopus" : "blob", kv(meta, "cpg", 0) != 0 ? " + rhythm" : "", n, sim_s / 60.0, (age_s + sim_s) / 60.0, NL, NL ? 100.0 * deaths / NL : 0.0,
+        best_d, best_b + 1, q1, q4, (int)kv(meta, "generations", 0), 100.0 * kv(meta, "mutation", 0));
+    std::printf("%s\n", head);
+    auto draw = [&]() {
+        ImGui::TextWrapped("%s", head);
+        const float H = plot_avail_h(), Wd = plot_avail_w();
+        if (ImPlot::BeginPlot("Distance per life (m): dots = each life, lines = rolling mean", ImVec2(Wd * 0.5f - 4, H * 0.5f - 4))) {
+            ImPlot::SetupAxes("life", "distance (m)", ImPlotAxisFlags_AutoFit, ImPlotAxisFlags_AutoFit);
+            for (int b = 0; b < K; ++b) {
+                if (ly[b].empty()) continue;
+                char nm[24]; std::snprintf(nm, sizeof(nm), "brain %d", b + 1);
+                ImVec4 c = COL[b % 8]; ImVec4 cd = c; cd.w = 0.35f;
+                ImPlot::PlotScatter(nm, lx[b].data(), ly[b].data(), (int)ly[b].size(), dot_spec(cd, 2.0f));
+                ImPlot::PlotLine(nm, lx[b].data(), rm[b].data(), (int)rm[b].size(), line_spec(c, 2.0f));
+            }
+            ImPlot::EndPlot();
+        }
+        ImGui::SameLine();
+        if (ImPlot::BeginPlot("Whole population over time (m)", ImVec2(-1, H * 0.5f - 4))) {
+            ImPlot::SetupAxes("simulated time (min)", "distance (m)", ImPlotAxisFlags_AutoFit, ImPlotAxisFlags_AutoFit);
+            if (!ev_t.empty()) {
+                ImPlotSpec es = line_spec(ImVec4(0.6f, 0.6f, 0.6f, 0.25f), 1.0f);
+                ImPlot::PlotInfLines("child born (evolution)", ev_t.data(), (int)ev_t.size(), es);
+            }
+            ImPlot::PlotScatter("each life", all_t.data(), all_d.data(), (int)all_d.size(), dot_spec(ImVec4(0.8f, 0.8f, 0.8f, 0.35f), 2.0f));
+            ImPlot::PlotLine("rolling mean", all_rm_t.data(), all_rm.data(), (int)all_rm.size(), line_spec(ImVec4(0.3f, 1.0f, 0.5f, 1), 2.5f));
+            ImPlot::EndPlot();
+        }
+        const float hb = plot_avail_h();
+        if (ImPlot::BeginPlot("Survival: % of lives that lasted the full life length (per 10 lives)", ImVec2(Wd * 0.5f - 4, hb))) {
+            ImPlot::SetupAxes("life", "survived (%)", ImPlotAxisFlags_AutoFit, 0);
+            ImPlot::SetupAxisLimits(ImAxis_Y1, -5, 105, ImPlotCond_Always);
+            for (int b = 0; b < K; ++b) {
+                if (sy[b].empty()) continue;
+                char nm[24]; std::snprintf(nm, sizeof(nm), "brain %d", b + 1);
+                ImPlotSpec ls = line_spec(COL[b % 8], 2.0f); ls.Marker = ImPlotMarker_Circle; ls.MarkerSize = 3;
+                ImPlot::PlotLine(nm, sx[b].data(), sy[b].data(), (int)sy[b].size(), ls);
+            }
+            ImPlot::EndPlot();
+        }
+        ImGui::SameLine();
+        if (ImPlot::BeginPlot("Dopamine per second (smoothed)", ImVec2(-1, hb))) {
+            ImPlot::SetupAxes("simulated time (min)", "dopamine / s", ImPlotAxisFlags_AutoFit, ImPlotAxisFlags_AutoFit);
+            const double zero = 0.0;
+            ImPlot::PlotInfLines("##zero", &zero, 1, [] { ImPlotSpec z = line_spec(ImVec4(0.6f, 0.6f, 0.6f, 0.5f), 1.0f); z.Flags = ImPlotInfLinesFlags_Horizontal; return z; }());
+            for (int b = 0; b < K; ++b) {
+                char nm[24]; std::snprintf(nm, sizeof(nm), "brain %d", b + 1);
+                if (ND) ImPlot::PlotLine(nm, dt_min.data(), dv[b].data(), ND, line_spec(COL[b % 8], 1.5f));
+            }
+            ImPlot::EndPlot();
+        }
+    };
+    if (show_window) plot_window("Brain - walking creatures", 1600, 1000, draw, "walking.png");
+}
+
 void plot_latest(const std::string& folder) {
     if (!file_exists(P(folder, "meta.txt"))) { std::printf("No output yet - run a simulation first\n"); return; }
     const KV m = read_kv(P(folder, "meta.txt"));
-    if ((int)kv(m, "tone", 0) == 1) analyze_tone(folder);
+    if ((int)kv(m, "walk", 0) == 1) analyze_walk(folder);
+    else if ((int)kv(m, "tone", 0) == 1) analyze_tone(folder);
     else if ((int)kv(m, "seq", 0) == 1) analyze_seq(folder);
     else plot_run(folder);
 }

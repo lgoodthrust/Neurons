@@ -60,8 +60,10 @@ int run_sim(const RunConfig& cfg, RunResult* result) {
     const bool  live       = cfg.mode == "live";
     const bool  walk_run   = cfg.mode == "walk";          // walking creatures, one brain each
     const bool  interactive = live || walk_run;           // runs in a window until closed
-    const int   walk_K     = std::max(1, cfg.walk_brains);
-    const int   walk_n     = std::max(cfg.walk_modular ? WALK_MIN_OCTO : WALK_MIN_BLOB, cfg.N / 5 * 5);   // per brain (multiple of 5)
+    int         walk_K     = std::max(1, cfg.walk_brains);
+    int         walk_n     = std::max(cfg.walk_modular ? WALK_MIN_OCTO : WALK_MIN_BLOB, cfg.N / 5 * 5);   // per brain (multiple of 5)
+    bool        walk_mod   = cfg.walk_modular;          // (a loaded walker population brings its own)
+    bool        walk_cpg   = cfg.walk_modular && cfg.walk_cpg;
     const bool  seq_run    = cfg.mode == "seq";
     const bool  tone_run   = cfg.mode == "tone";          // frequency task
     const bool  seq_live   = live && cfg.live_extra == "seq";
@@ -91,8 +93,14 @@ int run_sim(const RunConfig& cfg, RunResult* result) {
     BrainInfo saved;
     if (!cfg.load_path.empty()) {
         std::string err;
-        if (!live) { std::fprintf(stderr, "Saved brains can only be continued in a live view\n"); return 1; }
+        if (!live && !walk_run) { std::fprintf(stderr, "Saved brains can only be continued in a live view or the walkers\n"); return 1; }
         if (!read_brain_header(cfg.load_path, saved, err)) { std::fprintf(stderr, "Cannot load brain: %s\n", err.c_str()); return 1; }
+        if (walk_run != (saved.walk_K > 0)) {
+            std::fprintf(stderr, walk_run ? "That brain is not a walker population\n"
+                                          : "That file holds walking creatures; load it from menu 12\n");
+            return 1;
+        }
+        if (walk_run) { walk_K = saved.walk_K; walk_n = saved.walk_n; walk_mod = saved.walk_mod != 0; walk_cpg = saved.walk_cpg != 0; }
         if (saved.senses != senses) {
             std::fprintf(stderr, "That brain was made for a different view (senses %d, this view %d)\n", saved.senses, senses);
             return 1;
@@ -210,7 +218,7 @@ int run_sim(const RunConfig& cfg, RunResult* result) {
         if (!load_brain(cfg.load_path, net, saved, err)) { std::fprintf(stderr, "Cannot load brain: %s\n", err.c_str()); return 1; }
         if (saved.N_E != N_E || saved.N_A != N_A) { std::fprintf(stderr, "Brain file does not match this build\n"); return 1; }
     } else if (walk_run) {
-        net = build_walk_network(p, walk_K, walk_n, d_min, d_max, cfg.walk_modular, kLocE, kLocI);
+        net = build_walk_network(p, walk_K, walk_n, d_min, d_max, walk_mod, kLocE, kLocI, walk_cpg);
     } else {
         net = build_network(p, N, N_E, N_A, d_min, d_max, p_from_E, p_from_I, &anat);
     }
@@ -305,7 +313,8 @@ int run_sim(const RunConfig& cfg, RunResult* result) {
 
 #ifdef BRAIN_VIZ
     if (walk_run) {
-        WalkCtx wc; wc.brains = walk_K; wc.n = walk_n; wc.nnz = nnz; wc.modular = cfg.walk_modular;
+        WalkCtx wc; wc.brains = walk_K; wc.n = walk_n; wc.nnz = nnz; wc.modular = walk_mod; wc.cpg = walk_cpg;
+        wc.age_s = cfg.load_path.empty() ? 0.0 : saved.age_s; wc.name = cfg.brain_name;
         const int rc = run_walk(s, p, blocks, threads, wc);
         cudaDeviceReset();
         return rc;
@@ -348,10 +357,12 @@ int run_sim(const RunConfig& cfg, RunResult* result) {
         CUDA_CHECK(cudaDeviceSynchronize());
         std::printf("Profiling window: steps %d-%d (%d epochs, %.1f ms of simulated time)\n",
                     a, b, (b - a) / p.M, (b - a) * p.dt);
-        cudaProfilerStart();
+        const cudaError_t ps = cudaProfilerStart();
         run_steps(a, b);
         CUDA_CHECK(cudaDeviceSynchronize());
-        cudaProfilerStop();
+        const cudaError_t pe = cudaProfilerStop();
+        std::printf("  profiler start: %s, stop: %s (1 kernel launch in the window)\n",
+                    cudaGetErrorString(ps), cudaGetErrorString(pe));
         run_steps(b, steps);
     } else if (!tone_run) {
         run_steps(0, steps);

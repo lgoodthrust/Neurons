@@ -168,20 +168,53 @@ static void cmd_tone() {
 // Walking creatures: several brains, each learning to walk a two-legged body
 static void cmd_walk() {
     RunConfig c = cfg("walk", 0, 0.0f);
-    c.walk_brains = std::max(1, std::min(8, ask("creatures (brains), 1-8", 4)));
-    c.walk_modular = ask("brain type: 1 = octopus (torso + a module per leg), 2 = one blob", 1) != 2;
-    const int lo = c.walk_modular ? 2000 : 1000;
-    c.N = std::max(lo, (int)ask(c.walk_modular ? "neurons per brain (at least 2,000)" : "neurons per brain (at least 1,000)", 3000));
-    std::printf("  %d brains x %d neurons = %d neurons in total. Close the window or press Esc to stop.\n",
-                c.walk_brains, c.N, c.walk_brains * c.N);
-    run_sim(c);
+    c.brain_name = "walkers";
+    std::vector<std::string> info;
+    const std::vector<std::string> saved = list_brains(&info, 2);      // walker populations only
+    if (!saved.empty()) {
+        std::printf("\n  Saved walker populations:\n");
+        for (size_t i = 0; i < saved.size(); ++i)
+            std::printf("   %2zu) %-28s %s\n", i + 1, saved[i].c_str(), info[i].c_str());
+        std::cout << "  Load which one? (number, or Enter for new creatures): " << std::flush;
+        std::string line;
+        std::getline(std::cin, line);
+        try {
+            const int k = line.empty() ? 0 : std::stoi(line);
+            if (k >= 1 && k <= (int)saved.size()) {
+                c.load_path = saved[k - 1];
+                std::string stem = c.load_path;                // brains/name.brain -> name
+                const size_t sl = stem.find_last_of("\\/");
+                if (sl != std::string::npos) stem = stem.substr(sl + 1);
+                if (stem.size() > 6 && stem.substr(stem.size() - 6) == ".brain") stem.resize(stem.size() - 6);
+                c.brain_name = stem;
+            }
+        } catch (...) {}
+    }
+    if (c.load_path.empty()) {
+        c.walk_brains = std::max(1, std::min(8, ask("creatures (brains), 1-8", 4)));
+        c.walk_modular = ask("brain type: 1 = octopus (torso + a module per leg), 2 = one blob", 1) != 2;
+        if (c.walk_modular) c.walk_cpg = ask("spinal rhythm generators (a walking rhythm per joint): 1 = yes, 2 = no", 1) != 2;
+        const int lo = c.walk_modular ? 2000 : 1000;
+        c.N = std::max(lo, (int)ask(c.walk_modular ? "neurons per brain (at least 2,000)" : "neurons per brain (at least 1,000)", 3000));
+        std::cout << "  Name for saving these brains [walkers]: " << std::flush;
+        std::string name;
+        std::getline(std::cin, name);
+        name.erase(0, name.find_first_not_of(" \t"));
+        name.erase(name.find_last_not_of(" \t\r") + 1);
+        if (!name.empty()) c.brain_name = name;
+        std::printf("  %d brains x %d neurons = %d neurons in total.\n", c.walk_brains, c.N, c.walk_brains * c.N);
+    }
+    std::printf("  (Save brains in the panel saves them as brains/%s.brain; closing does not save.\n"
+                "   Close the window or press Esc to stop: the results are plotted and saved as walking.png.)\n",
+                c.brain_name.c_str());
+    if (run_sim(c) == 0) analyze_walk(HERE);
 }
 
 static void cmd_live(const char* extra, int default_n, const char* prompt) {
     RunConfig c = cfg("live", default_n, 0.0f);
     c.live_extra = extra;
     std::vector<std::string> info;
-    const std::vector<std::string> brains = list_brains(&info);
+    const std::vector<std::string> brains = list_brains(&info, 1);    // live-view brains (not walkers)
     if (!brains.empty()) {
         std::printf("\n  Saved brains (only ones made in this same view will load):\n");
         for (size_t i = 0; i < brains.size(); ++i)

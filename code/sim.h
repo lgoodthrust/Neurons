@@ -17,6 +17,7 @@ struct RunConfig {
     int         tone_train = 300;   // frequency task: training presentations (half are the target)
     int         walk_brains = 4;    // walking task: creatures (one brain each); N = neurons per brain
     bool        walk_modular = true;// walking task: octopus brain (torso + leg modules) instead of one blob
+    bool        walk_cpg = true;    // walking task (octopus): spinal rhythm generators
     // brain options (menu 13; the menu fills these in for every run)
     int         syn  = 160;         // simulated synapses per neuron (half E, half I); the rest of a
                                     // neuron's ~6,900 inputs arrive as background
@@ -48,4 +49,5 @@ RunConfig config_from_args(int argc, char** argv);
 
 // Saved brains in brains/ (paths), with an optional one-line summary of each
 #include <vector>
-std::vector<std::string> list_brains(std::vector<std::string>* summaries = nullptr);
+// which: 0 = all, 1 = live-view brains only, 2 = walker populations only
+std::vector<std::string> list_brains(std::vector<std::string>* summaries = nullptr, int which = 0);

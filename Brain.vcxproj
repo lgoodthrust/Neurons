@@ -30,20 +30,20 @@
     <ClInclude Include="code\walkphys.h" />
   </ItemGroup>
   <ItemGroup>
+    <ClCompile Include="code\app.cpp" />
+    <ClCompile Include="code\audio.cpp" />
+    <ClCompile Include="code\plotwin.cpp" />
+    <ClCompile Include="code\results.cpp" />
+    <ClCompile Include="code\validate.cpp" />
+    <ClCompile Include="code\walkphys.cpp" />
+  </ItemGroup>
+  <ItemGroup>
     <CudaCompile Include="code\brainfile.cu" />
     <CudaCompile Include="code\kernels.cu" />
     <CudaCompile Include="code\main.cu" />
     <CudaCompile Include="code\network.cu" />
     <CudaCompile Include="code\viz.cu" />
     <CudaCompile Include="code\walker.cu" />
-  </ItemGroup>
-  <ItemGroup>
-    <ClCompile Include="code\app.cpp" />
-    <ClCompile Include="code\Audio.cpp" />
-    <ClCompile Include="code\plotwin.cpp" />
-    <ClCompile Include="code\results.cpp" />
-    <ClCompile Include="code\validate.cpp" />
-    <ClCompile Include="code\walkphys.cpp" />
   </ItemGroup>
   <PropertyGroup Label="Globals">
     <VCProjectVersion>17.0</VCProjectVersion>

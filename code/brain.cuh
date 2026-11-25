@@ -63,6 +63,15 @@
 //  state: no per-neuron RNG memory, no load/store each epoch, fewer registers.
 //  Branch-voltage / plateau statistics are sampled once per epoch (1 ms) instead
 //  of every step, which takes 8 accumulators out of the inner loop.
+//  v10.0: spinal rhythm generators for octopus walkers: a half-centre oscillator per joint (flex/extend
+//  groups exciting themselves, inhibiting each other through inhibitory pools, tired out by adaptation),
+//  knee locked to hip, and a 'brainstem drive' slider. Designed and tuned on a CPU test bench first.
+//  v9.9: real evolution for the walkers: each generation the weakest share is replaced by mutated
+//  copies of the strongest (GPU mutation kernel, Philox noise); survivors unchanged; children start fresh.
+//  v9.8: walkers save / load their whole population (menu 12) and plot + save walking.png
+//  when the window closes.
+//  v9.7: include only the Philox generator header (curand_kernel.h put ~1.3 MB of unused
+//  generator tables into every .cu file: about 8 MB of Brain.exe).
 //  v9.6: warp pool in pull: neurons that cannot be potentiated this epoch (no own E spike) have
 //  all their notes processed by the whole warp together; their input-buffer adds become atomic.
 //  Spiking E neurons keep the step-by-step path, so the STDP order is unchanged.
@@ -143,7 +152,8 @@
 #pragma once
 
 #include <cuda_runtime.h>
-#include <curand_kernel.h>
+#include <curand_philox4x32_x.h>   // Philox only: curand_kernel.h embeds ~220 KB of unused
+                                   // generator tables into every file that includes it (v9.7)
 
 #include <algorithm>
 #include <chrono>
@@ -290,13 +300,16 @@ void finish_network(Network& net, int N, int N_E, int N_A);       // outgoing li
 
 // ----------------------------- Brain files (brainfile.cu) -------------------
 struct BrainInfo { int N = 0, N_E = 0, N_A = 0, senses = 0, anatomy = 0; size_t nnz = 0; double age_s = 0;
-                   float dt = 0.1f, syn = 160.f; };   // time step and synapse setting it was built with
+                   float dt = 0.1f, syn = 160.f;      // time step and synapse setting it was built with
+                   int walk_K = 0, walk_n = 0, walk_mod = 0, walk_cpg = 0; };   // walker population (0 = not a walker file)
 bool read_brain_header(const std::string& path, BrainInfo& info, std::string& err);
 bool load_brain(const std::string& path, Network& net, BrainInfo& info, std::string& err);
+// walk (optional): {creatures, neurons per brain, octopus 0/1, rhythm generators 0/1} for a walker file
 bool write_brain_file(const std::string& path, const Network& net, int N, int N_E, int N_A, int senses,
-                      double age_s, std::string& msg, float dt = 0.1f, float syn = 300.f);
+                      double age_s, std::string& msg, float dt = 0.1f, float syn = 300.f,
+                      const int* walk = nullptr);
 bool save_brain(const std::string& path, const DevState& s, const Params& p, size_t nnz, int senses,
-                const std::vector<float>* layout, double age_s, std::string& msg);
+                const std::vector<float>* layout, double age_s, std::string& msg, const int* walk = nullptr);
 
 // ----------------------------- Walking creatures (walker.cu) ---------------
 // Several identical brains in one simulation (no connections between them), one per creature.
@@ -315,9 +328,12 @@ struct WalkLayout {
     int  modE[4], modI[4];                 // module boundaries (local E / local I): torso, back leg, front leg
 };
 WalkLayout walk_layout(int n, bool modular);
-struct WalkCtx { int brains = 4; int n = 3000; size_t nnz = 0; bool modular = true; };
+struct WalkCtx { int brains = 4; int n = 3000; size_t nnz = 0; bool modular = true; bool cpg = false;
+                 double age_s = 0;              // simulated time the population had lived before (loaded)
+                 std::string name = "walkers"; };   // saved as brains/<name>.brain
 Network build_walk_network(const Params& p, int brains, int n, int d_min, int d_max, bool modular,
-                           float kE, float kI);   // kE / kI: simulated E / I inputs per neuron
+                           float kE, float kI,     // kE / kI: simulated E / I inputs per neuron
+                           bool cpg = false);      // octopus only: spinal rhythm generators
 int run_walk(DevState& s, Params& p, int blocks, int threads, const WalkCtx& ctx);
 
 // What the live view needs to save the brain it is running
