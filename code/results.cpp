@@ -66,7 +66,7 @@ void plot_run(const std::string& folder, bool show_window) {
     }
     std::vector<float> trs = read_bin<float>(P(folder, "trace_soma.bin"));
     std::vector<float> trb = read_bin<float>(P(folder, "trace_branch.bin"));
-    std::vector<float> wm  = read_bin<float>(P(folder, "weights_mean.bin"));
+    std::vector<float> wm = read_bin<float>(P(folder, "weights_mean.bin"));
     if ((int)trs.size() < n_rec * NT || (int)trb.size() < n_rec * NT * B || (int)wm.size() < 2 * n_snap) {
         std::printf("Output files are incomplete - run a simulation again\n"); return;
     }
@@ -134,12 +134,12 @@ void plot_run(const std::string& folder, bool show_window) {
 
     char head[256], lA[96], lE[96], lI[96], rtitle[160];
     std::snprintf(head, sizeof(head), "%d neurons: %.1f s simulated in %.2f s on the GPU (%.1fx real time, %.2f us/step)",
-                  N, T / 1000, wall, T / 1000 / wall, 1e6 * wall / steps);
+        N, T / 1000, wall, T / 1000 / wall, 1e6 * wall / steps);
     std::snprintf(lA, sizeof(lA), "group A, stimulated (%.1f Hz)", rate_A);
     std::snprintf(lE, sizeof(lE), "other excitatory (%.1f Hz)", rate_E);
     std::snprintf(lI, sizeof(lI), "inhibitory (%.1f Hz)", rate_I);
     std::snprintf(rtitle, sizeof(rtitle), "%s%d neurons, last 3 s of activity (C++/CUDA v%g)   CV %.2f##raster",
-                  stride == 1 ? "" : ("every " + std::to_string(stride) + "th neuron of ").c_str(), N, version, cv);
+        stride == 1 ? "" : ("every " + std::to_string(stride) + "th neuron of ").c_str(), N, version, cv);
     const ImVec4 bcol[4] = { ImVec4(1.0f, 0.5f, 0.05f, 1), ImVec4(0.74f, 0.74f, 0.13f, 1),
                              ImVec4(0.09f, 0.75f, 0.81f, 1), ImVec4(0.89f, 0.47f, 0.76f, 1) };
 
@@ -190,12 +190,13 @@ void plot_run(const std::string& folder, bool show_window) {
             if (!w0p.empty()) {
                 ImPlot::PlotHistogram("start", w0p.data(), (int)w0p.size(), 60, 1.0, ImPlotRange(0, hmax), fill_spec(C_GRAY, 0.5f));
                 ImPlot::PlotHistogram("end", w1p.data(), (int)w1p.size(), 60, 1.0, ImPlotRange(0, hmax), fill_spec(C_BLUE, 0.5f));
-            } else {
+            }
+            else {
                 ImPlot::PlotText("synapse lists not saved for N > 20,000", 0.5, 0.5);
             }
             ImPlot::EndPlot();
         }
-    };
+        };
     if (show_window) plot_window("Brain - run results", 1600, 1000, draw, "test.png");
 }
 
@@ -229,7 +230,7 @@ void analyze_seq(const std::string& folder, bool show_window) {
             if (((c0 / cyc) & 1) == (which == 0 ? 0 : 1)) out.push_back(c0);
         }
         return out;
-    };
+        };
     const auto before_A = cues(0, tr0, 0), before_D = cues(0, tr0, K - 1);
     const auto after_A = cues(tr1, steps, 0), after_D = cues(tr1, steps, K - 1);
 
@@ -252,26 +253,26 @@ void analyze_seq(const std::string& folder, bool show_window) {
         const double norm = onsets.size() * (double)S * binw * dt / 1000.0;
         for (auto& g : out) for (double& v : g) v /= norm;
         return out;
-    };
+        };
     const auto bA = psth(before_A), aA = psth(after_A), bD = psth(before_D), aD = psth(after_D);
     auto resp = [&](const std::vector<std::vector<double>>& r, int g) {
         double s = 0; int n = 0;
         for (int b = 0; b < nb; ++b) if (tcent[b] >= 5 && tcent[b] <= 80) { s += r[g][b]; ++n; }
         return n ? s / n : 0.0;
-    };
+        };
     auto peak = [&](const std::vector<std::vector<double>>& r, int g) {
         double best = -1, at = 0;
         for (int b = 0; b < nb; ++b) if (tcent[b] >= 2 && tcent[b] <= 90 && r[g][b] > best) { best = r[g][b]; at = tcent[b]; }
         return at;
-    };
+        };
 
     std::printf("\n================ SEQUENCE TASK ================\n");
     std::printf("cues: %zu x A and %zu x D before training, %zu x A and %zu x D after\n",
-                before_A.size(), before_D.size(), after_A.size(), after_D.size());
+        before_A.size(), before_D.size(), after_A.size(), after_D.size());
     std::printf("Response to cue A (mean rate 5-80 ms after cue, Hz)    before   after    peak after (ms)\n");
     for (int g = 1; g < K; ++g)
         std::printf("   group %c                                          %6.1f  %6.1f    %5.0f\n",
-                    names[g], resp(bA, g), resp(aA, g), peak(aA, g));
+            names[g], resp(bA, g), resp(aA, g), peak(aA, g));
     std::printf("Control, response to cue D (should NOT run backwards)  before   after\n");
     for (int g = K - 2; g >= 0; --g)
         std::printf("   group %c                                          %6.1f  %6.1f\n", names[g], resp(bD, g), resp(aD, g));
@@ -282,10 +283,10 @@ void analyze_seq(const std::string& folder, bool show_window) {
     bool ordered = true;
     for (int g = 1; g + 1 < K; ++g) ordered = ordered && peak(aA, g) < peak(aA, g + 1);
     std::printf("Replay gain (forward) %+.1f Hz | backward %+.1f Hz | peaks in order B<C<D: %s\n",
-                fwd, rev, ordered ? "yes" : "no");
+        fwd, rev, ordered ? "yes" : "no");
     const char* verdict = (fwd > 2.0 && fwd > 2 * std::max(rev, 0.5) && ordered) ? "REPLAY: cue A sets off B, C, D in order"
-                        : fwd > 1.0 ? "PARTIAL: forward response grew, but not a clean ordered chain"
-                        : "NO REPLAY yet: try more training or a higher learning rate";
+        : fwd > 1.0 ? "PARTIAL: forward response grew, but not a clean ordered chain"
+        : "NO REPLAY yet: try more training or a higher learning rate";
     std::printf("VERDICT: %s\n================================================\n", verdict);
 
     // weights between groups over time: [snap][pre][post]
@@ -316,7 +317,7 @@ void analyze_seq(const std::string& folder, bool show_window) {
 
     char head[320];
     std::snprintf(head, sizeof(head), "Sequence task: %d neurons, %.0f s training, learning x%g, %.0f s simulated in %.1f s  |  %s",
-                  (int)kv(meta, "N"), (tr1 - tr0) * dt / 1000, kv(meta, "lr", 1), steps * dt / 1000, kv(meta, "wall_s"), verdict);
+        (int)kv(meta, "N"), (tr1 - tr0) * dt / 1000, kv(meta, "lr", 1), steps * dt / 1000, kv(meta, "wall_s"), verdict);
 
     auto draw = [&]() {
         ImGui::TextUnformatted(head);
@@ -370,7 +371,7 @@ void analyze_seq(const std::string& folder, bool show_window) {
             ImPlot::PopColormap();
             ImPlot::EndPlot();
         }
-    };
+        };
     if (show_window) plot_window("Brain - sequence task", 1600, 1000, draw, "sequence.png");
 }
 
@@ -407,7 +408,7 @@ void analyze_tone(const std::string& folder, bool show_window) {
         std::fill(out.begin(), out.end(), 0.0);
         auto it = std::lower_bound(ev.begin(), ev.end(), std::make_pair(a, -1));
         for (; it != ev.end() && it->first < b; ++it) out[it->second] += 1;
-    };
+        };
     // response = rate during the tone minus rate in the 150 ms before it (Hz per neuron)
     const int ntr = (int)(tr.size() / 5), base_steps = (int)std::lround(150 / dt);
     std::vector<double> resp(2 * K * (NB + NT), 0.0), reps(2 * K, 0.0), on(NB + NT), off(NB + NT);
@@ -450,22 +451,22 @@ void analyze_tone(const std::string& folder, bool show_window) {
 
     std::printf("\n================ FREQUENCY TASK ================\n");
     std::printf("Trained tone %.0f Hz, %d training presentations, reward strength %g\n",
-                target, (int)kv(meta, "tone_train"), kv(meta, "reward"));
+        target, (int)kv(meta, "tone_train"), kv(meta, "reward"));
     std::printf("Response of the cells tuned to each tone (Hz above baseline)\n");
     std::printf("   tone (Hz)     A1 before  A1 after   change    mouth before  mouth after\n");
     for (int k = 0; k < K; ++k)
         std::printf("   %7.0f%s   %8.2f  %8.2f  %+8.2f      %8.2f    %8.2f\n", hz[k], k == TGT ? " *" : "  ",
-                    a1[k], a1[K + k], a1[K + k] - a1[k], mo[k], mo[K + k]);
+            a1[k], a1[K + k], a1[K + k] - a1[k], mo[k], mo[K + k]);
     std::printf("A1: trained tone changed %+.2f Hz, other tones %+.2f Hz on average\n", gt_a, oth_a);
     std::printf("Mouth: trained tone changed %+.2f Hz, other tones %+.2f Hz on average\n", gt_m, oth_m);
     const double tb = NB * std::log(target / 20.0) / std::log(800.0) - 0.5;
     const int tbi = std::max(0, std::min(NB - 1, (int)std::lround(tb)));
     std::printf("Nerve -> A1 weight at the trained band: %.3f -> %.3f nS (all bands: %.3f -> %.3f)\n",
-                tw[tbi], tw[64 + tbi], [&] { double s = 0; for (int b = 0; b < NB; ++b) s += tw[b]; return s / NB; }(),
-                [&] { double s = 0; for (int b = 0; b < NB; ++b) s += tw[64 + b]; return s / NB; }());
+        tw[tbi], tw[64 + tbi], [&] { double s = 0; for (int b = 0; b < NB; ++b) s += tw[b]; return s / NB; }(),
+        [&] { double s = 0; for (int b = 0; b < NB; ++b) s += tw[64 + b]; return s / NB; }());
     const char* verdict = (gt_a > 0.5 && gt_a > 2.0 * std::max(std::fabs(oth_a), 0.25)) ? "SELECTIVE: the trained tone's response grew more than the others"
-                        : (std::fabs(gt_a) > 0.5 || std::fabs(oth_a) > 0.5) ? "GENERAL: responses changed, but not specifically for the trained tone"
-                        : "NO CLEAR CHANGE: try more training or a higher reward strength";
+        : (std::fabs(gt_a) > 0.5 || std::fabs(oth_a) > 0.5) ? "GENERAL: responses changed, but not specifically for the trained tone"
+        : "NO CLEAR CHANGE: try more training or a higher reward strength";
     std::printf("VERDICT: %s\n================================================\n", verdict);
 
     // ---- figure ----
@@ -485,7 +486,7 @@ void analyze_tone(const std::string& folder, bool show_window) {
     for (int t = 0; t < NT; ++t) { mx[t] = (t + 0.5) * NB / NT; wM0[t] = tw[128 + t]; wM1[t] = tw[192 + t]; }
     char head[320];
     std::snprintf(head, sizeof(head), "Frequency task: %d neurons, trained %.0f Hz with dopamine (%d presentations, strength %g), %.0f s simulated in %.1f s  |  %s",
-                  N, target, (int)kv(meta, "tone_train"), kv(meta, "reward"), kv(meta, "steps") * dt / 1000, kv(meta, "wall_s"), verdict);
+        N, target, (int)kv(meta, "tone_train"), kv(meta, "reward"), kv(meta, "steps") * dt / 1000, kv(meta, "wall_s"), verdict);
     const double tgt_x = TGT, tgt_b = tb;
     auto draw = [&]() {
         ImGui::TextUnformatted(head);
@@ -535,7 +536,7 @@ void analyze_tone(const std::string& folder, bool show_window) {
             ImPlot::PlotLine("A1->mouth after", mx.data(), wM1.data(), NT, line_spec(ImVec4(0.9f, 0.4f, 0.9f, 1), 2.0f));
             ImPlot::EndPlot();
         }
-    };
+        };
     if (show_window) plot_window("Brain - frequency task", 1600, 1000, draw, "frequency.png");
 }
 
@@ -549,8 +550,8 @@ void analyze_walk(const std::string& folder, bool show_window) {
     const bool octo = kv(meta, "modular", 0) != 0;
     const double sim_s = kv(meta, "sim_s"), age_s = kv(meta, "age_s", 0);
     const auto lives = read_bin<float>(P(folder, "walk_lives.bin"));      // brain, life, t, dist, died
-    const auto dop   = read_bin<float>(P(folder, "walk_dopamine.bin"));   // t, then K values
-    const auto ev    = read_bin<float>(P(folder, "walk_events.bin"));     // t, replaced, copied
+    const auto dop = read_bin<float>(P(folder, "walk_dopamine.bin"));   // t, then K values
+    const auto ev = read_bin<float>(P(folder, "walk_events.bin"));     // t, replaced, copied
     if (K < 1 || lives.size() % 5 || dop.size() % (size_t)(K + 1) || ev.size() % 3) {
         std::printf("Walking-creature files are missing or incomplete.\n"); return;
     }
@@ -598,7 +599,23 @@ void analyze_walk(const std::string& folder, bool show_window) {
         dt_min[i] = dop[(size_t)i * (K + 1)] / 60.0;
         for (int b = 0; b < K; ++b) dv[b][i] = dop[(size_t)i * (K + 1) + 1 + b];
     }
+    // dopamine: the raw samples flicker every few hundred ms; show a 60-second moving average instead
+    for (int b = 0; b < K; ++b) {
+        std::vector<double> sm(ND); double acc = 0; int w0 = 0;
+        for (int i = 0; i < ND; ++i) {
+            acc += dv[b][i];
+            while (dt_min[i] - dt_min[w0] > 1.0) acc -= dv[b][w0++];     // window: the last minute
+            sm[i] = acc / (i - w0 + 1);
+        }
+        dv[b] = sm;
+    }
+    // births: at most ~60 marks, so the timeline stays readable after hundreds of generations
     std::vector<double> ev_t; for (size_t i = 0; i + 2 < ev.size(); i += 3) ev_t.push_back(ev[i] / 60.0);
+    if (ev_t.size() > 60) {
+        std::vector<double> thin; const size_t stride = (ev_t.size() + 59) / 60;
+        for (size_t i = 0; i < ev_t.size(); i += stride) thin.push_back(ev_t[i]);
+        ev_t.swap(thin);
+    }
     // first vs last quarter of all lives: is the population getting better?
     double q1 = 0, q4 = 0; int nq = NL / 4;
     for (int i = 0; i < nq; ++i) { q1 += all_d[i]; q4 += all_d[NL - nq + i]; }
@@ -629,8 +646,8 @@ void analyze_walk(const std::string& folder, bool show_window) {
         if (ImPlot::BeginPlot("Whole population over time (m)", ImVec2(-1, H * 0.5f - 4))) {
             ImPlot::SetupAxes("simulated time (min)", "distance (m)", ImPlotAxisFlags_AutoFit, ImPlotAxisFlags_AutoFit);
             if (!ev_t.empty()) {
-                ImPlotSpec es = line_spec(ImVec4(0.6f, 0.6f, 0.6f, 0.25f), 1.0f);
-                ImPlot::PlotInfLines("child born (evolution)", ev_t.data(), (int)ev_t.size(), es);
+                ImPlotSpec es = line_spec(ImVec4(0.6f, 0.6f, 0.6f, 0.15f), 1.0f);
+                ImPlot::PlotInfLines("births (evolution, thinned)", ev_t.data(), (int)ev_t.size(), es);
             }
             ImPlot::PlotScatter("each life", all_t.data(), all_d.data(), (int)all_d.size(), dot_spec(ImVec4(0.8f, 0.8f, 0.8f, 0.35f), 2.0f));
             ImPlot::PlotLine("rolling mean", all_rm_t.data(), all_rm.data(), (int)all_rm.size(), line_spec(ImVec4(0.3f, 1.0f, 0.5f, 1), 2.5f));
@@ -649,7 +666,7 @@ void analyze_walk(const std::string& folder, bool show_window) {
             ImPlot::EndPlot();
         }
         ImGui::SameLine();
-        if (ImPlot::BeginPlot("Dopamine per second (smoothed)", ImVec2(-1, hb))) {
+        if (ImPlot::BeginPlot("Dopamine per second (1-minute average)", ImVec2(-1, hb))) {
             ImPlot::SetupAxes("simulated time (min)", "dopamine / s", ImPlotAxisFlags_AutoFit, ImPlotAxisFlags_AutoFit);
             const double zero = 0.0;
             ImPlot::PlotInfLines("##zero", &zero, 1, [] { ImPlotSpec z = line_spec(ImVec4(0.6f, 0.6f, 0.6f, 0.5f), 1.0f); z.Flags = ImPlotInfLinesFlags_Horizontal; return z; }());
@@ -659,7 +676,7 @@ void analyze_walk(const std::string& folder, bool show_window) {
             }
             ImPlot::EndPlot();
         }
-    };
+        };
     if (show_window) plot_window("Brain - walking creatures", 1600, 1000, draw, "walking.png");
 }
 

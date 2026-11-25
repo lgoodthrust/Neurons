@@ -1,5 +1,7 @@
 // kernels.cu - the GPU simulation: neuron update, spike delivery, STDP, main kernel
 #include "brain.cuh"
+#include <climits>
+#include <cstdio>
 #include <cooperative_groups.h>
 namespace cg = cooperative_groups;
 
@@ -124,7 +126,7 @@ __device__ __forceinline__ void integrate_neuron(const DevState& s, const Params
         float uu[8];
         if (!p.deterministic) {
             // counter-based Philox: random numbers computed from (neuron, step), no stored state
-            const uint2 key = make_uint2(0x2545F491u, 0x9E3779B9u);
+            const uint2 key = make_uint2(0x2545F491u ^ (p.rng_epoch * 0x85EBCA6Bu), 0x9E3779B9u);
             const uint4 r0 = curand_Philox4x32_10(make_uint4((unsigned)step, (unsigned)n, 0u, 0x5EEDu), key);
             const uint4 r1 = curand_Philox4x32_10(make_uint4((unsigned)step, (unsigned)n, 1u, 0x5EEDu), key);
             uu[0] = u01(r0.x); uu[1] = u01(r0.y); uu[2] = u01(r0.z); uu[3] = u01(r0.w);
@@ -515,3 +517,37 @@ simulate(DevState s, Params p, int step_begin, int step_end) {
     if (timer) { s.prof[0] += tI; s.prof[1] += tS; s.prof[2] += tD; }
 }
 
+
+// -----------------------------------------------------------------------------
+//  Step-counter rebase (long interactive runs)
+// -----------------------------------------------------------------------------
+__global__ void shift_steps_kernel(int* __restrict__ a, size_t n, int shift) {
+    const size_t i = (size_t)blockIdx.x * blockDim.x + threadIdx.x;
+    if (i >= n) return;
+    const int v = a[i];
+    a[i] = v < INT_MIN / 2 ? v : v - shift;          // ancient values (sentinels) just stay ancient
+}
+
+void rebase_steps_if_needed(DevState& s, Params& p, int& step, size_t nnz) {
+    const int LIMIT = 1 << 30;                       // ~30 h of simulated time at 0.1 ms
+    if (step < LIMIT) return;
+    auto gcd = [](long long a, long long b) { while (b) { const long long t = a % b; a = b; b = t; } return a; };
+    auto lcm = [&](long long a, long long b) { return a > 0 && b > 0 ? a / gcd(a, b) * b : (a > 0 ? a : b); };
+    long long unit = lcm(L, 2LL * p.M);              // ring slots and epoch parity line up
+    long long u2 = lcm(unit, p.stim_every);
+    if (p.seq) u2 = lcm(u2, p.seq_cycle);
+    if (u2 > 0 && u2 <= LIMIT / 2) unit = u2;        // stimulus schedules line up too (if it fits)
+    const int shift = (int)(((long long)LIMIT / unit) * unit);
+    auto shift_dev = [&](int* a, size_t n) {
+        if (a && n) shift_steps_kernel<<<(unsigned)((n + 255) / 256), 256>>>(a, n, shift);
+    };
+    shift_dev(s.last_spike, (size_t)p.N);
+    shift_dev(s.poke_end, (size_t)p.N);
+    shift_dev(s.elig_t, nnz);
+    CUDA_CHECK(cudaGetLastError());
+    CUDA_CHECK(cudaDeviceSynchronize());
+    step -= shift;
+    p.train0 -= shift; p.train1 -= shift; p.test0 -= shift; // (sequence schedule, kept relative)
+    p.rng_epoch += 1;                                // fresh noise: never replay the same random numbers
+    std::printf("Step counter rebased by %d steps (simulated time continues seamlessly)\n", shift);
+}

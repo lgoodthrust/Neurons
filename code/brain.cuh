@@ -63,6 +63,11 @@
 //  state: no per-neuron RNG memory, no load/store each epoch, fewer registers.
 //  Branch-voltage / plateau statistics are sampled once per epoch (1 ms) instead
 //  of every step, which takes 8 accumulators out of the inner loop.
+//  v10.1: menu 13 allows up to 10,000 synapses per neuron; above 2,600 the inhibitory ones stop at a real
+//  neuron's 1,300 (background never negative); GPU memory is checked before the CPU builds the network.
+//  v10.2: fix: runs longer than 59.6 simulated hours overflowed the 32-bit step counter (the brain froze,
+//  then learning broke). Interactive views now rebase the counter every ~30 simulated hours.
+//  v10.1: live views: 'Flat map' (M) unrolls the sphere like a world map (pan, zoom, right-click poke).
 //  v10.0: spinal rhythm generators for octopus walkers: a half-centre oscillator per joint (flex/extend
 //  groups exciting themselves, inhibiting each other through inhibitory pools, tired out by adaptation),
 //  knee locked to hip, and a 'brainstem drive' slider. Designed and tuned on a CPU test bench first.
@@ -199,6 +204,7 @@ struct Params {
     float E_exc, E_inh, tau_ampa, tau_gaba, tau_nr, tau_nd, nmda_ratio, Mg;
     float g_exc, g_inh;
     float k_local;                             // simulated synapses per neuron (E + I), for saving
+    unsigned rng_epoch;                        // bumped at each step-counter rebase so the noise never repeats (0 = original)
     float lamE_branch_E, lamE_branch_I, lamI, stim_lam;
     float expE_E, expE_I, expI, expStim;
     float tau_plus, tau_minus, A_plus, A_minus, w_max;
@@ -335,6 +341,12 @@ Network build_walk_network(const Params& p, int brains, int n, int d_min, int d_
                            float kE, float kI,     // kE / kI: simulated E / I inputs per neuron
                            bool cpg = false);      // octopus only: spinal rhythm generators
 int run_walk(DevState& s, Params& p, int blocks, int threads, const WalkCtx& ctx);
+
+// Long runs: the step counter is a 32-bit int (it would overflow after 2^31 steps = 59.6 h at 0.1 ms).
+// Interactive views call this before each launch: past 2^30 steps it subtracts a large shift from the
+// counter and from every stored step (last spikes, poke ends, eligibility times). The shift is a multiple
+// of the input ring, of two epochs and of the stimulus periods, so every schedule lines up afterwards.
+void rebase_steps_if_needed(DevState& s, Params& p, int& step, size_t nnz);
 
 // What the live view needs to save the brain it is running
 struct LiveCtx {

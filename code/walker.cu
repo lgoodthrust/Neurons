@@ -472,6 +472,7 @@ int run_walk(DevState& s, Params& p, int blocks, int threads, const WalkCtx& ctx
         }
         CUDA_CHECK(cudaMemcpy(s.eye, sense.data(), sense.size() * sizeof(float), cudaMemcpyHostToDevice));
         // 2. 10 ms of brain
+        rebase_steps_if_needed(s, p, step, ctx.nnz);          // long runs: keep the step counter in range
         int begin = step, end = step + tick_steps;
         void* args[] = { &s, &p, &begin, &end };
         CUDA_CHECK(cudaLaunchCooperativeKernel((void*)simulate, dim3(blocks), dim3(threads), args, 0, 0));

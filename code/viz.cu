@@ -36,7 +36,7 @@
 //  LIVE VISUALIZER — brain in a vat
 // =============================================================================
 //  Controls: left-drag rotate | wheel zoom | Up/Down = 2x faster/slower |
-//            Space = pause | A = auto-rotate | R = reset view | Esc = quit
+//            Space = pause | A = auto-rotate | M = flat map | R = reset view | Esc = quit
 //            right-click (hold) = stimulate neurons under the cursor
 //            1 = burst into group A | S = group A auto-stimulus on/off | G = highlight group A
 //            [ ] = inhibition down/up | - = = background drive down/up | 0 = reset dials
@@ -95,6 +95,12 @@ static Mat4 perspective(float fovy, float aspect, float zn, float zf) {
     r.m[0] = f / aspect; r.m[5] = f;
     r.m[10] = (zf + zn) / (zn - zf); r.m[11] = -1;
     r.m[14] = 2 * zf * zn / (zn - zf);
+    return r;
+}
+static Mat4 ortho2d(float cx, float cy, float hw, float hh) {   // flat map: x in [cx-hw, cx+hw], ...
+    Mat4 r{};
+    r.m[0] = 1.f / hw; r.m[5] = 1.f / hh; r.m[10] = -1.f;
+    r.m[12] = -cx / hw; r.m[13] = -cy / hh; r.m[15] = 1.f;
     return r;
 }
 static Mat4 look_at(float ex, float ey, float ez) {      // looking at the origin, y up
@@ -313,7 +319,9 @@ static bool ui_wants_keys() {
 #endif
 }
 
-struct Cam { float yaw = 0.0f, pitch = 0.30f, dist = 4.2f; bool drag = false; double lx = 0, ly = 0; };
+struct Cam { float yaw = 0.0f, pitch = 0.30f, dist = 4.2f; bool drag = false; double lx = 0, ly = 0;
+             bool map = false;                  // flat map instead of the rotatable sphere
+             float mx = 0.f, my = 0.f, mzoom = 1.f, px_world = 0.01f; };   // map pan / zoom / units per pixel
 static Cam* g_cam = nullptr;
 
 }  // namespace viz
@@ -344,6 +352,12 @@ int run_live(DevState& s, Params& p, int blocks, int threads, bool seq_live, int
     });
     glfwSetCursorPosCallback(win, [](GLFWwindow*, double x, double y) {
         if (!g_cam->drag) return;
+        if (g_cam->map) {                                  // flat map: drag pans
+            g_cam->mx -= (float)(x - g_cam->lx) * g_cam->px_world;
+            g_cam->my += (float)(y - g_cam->ly) * g_cam->px_world;
+            g_cam->lx = x; g_cam->ly = y;
+            return;
+        }
         g_cam->yaw   -= (float)(x - g_cam->lx) * 0.006f;   // drag right -> scene turns right
         g_cam->pitch += (float)(y - g_cam->ly) * 0.006f;
         g_cam->pitch  = std::max(-1.45f, std::min(1.45f, g_cam->pitch));
@@ -351,6 +365,7 @@ int run_live(DevState& s, Params& p, int blocks, int threads, bool seq_live, int
     });
     glfwSetScrollCallback(win, [](GLFWwindow*, double, double dy) {
         if (ui_wants_mouse()) return;
+        if (g_cam->map) { g_cam->mzoom = std::max(0.5f, std::min(20.f, g_cam->mzoom * (dy > 0 ? 1.1f : 0.9f))); return; }
         g_cam->dist = std::max(1.2f, std::min(12.f, g_cam->dist * (dy > 0 ? 0.9f : 1.1f)));
     });
 
@@ -379,6 +394,20 @@ int run_live(DevState& s, Params& p, int blocks, int threads, bool seq_live, int
         ear_mouth_layout(xyzt, EN, AN, mouth0, MN);
     }
     std::vector<float> vat;  make_vat(vat);
+    // flat map: the same neurons unrolled like a world map - longitude across, latitude up, the front
+    // of the brain (the eye picture) in the middle; x in [-pi, pi], y in [-pi/2, pi/2]
+    std::vector<float> xym((size_t)N * 4);
+    for (int n = 0; n < N; ++n) {
+        const float* o = &xyzt[(size_t)n * 4];
+        const float r = std::sqrt(o[0] * o[0] + o[1] * o[1] + o[2] * o[2]);
+        xym[(size_t)n * 4 + 0] = std::atan2(o[0], o[2]);
+        xym[(size_t)n * 4 + 1] = r > 0.f ? std::asin(std::max(-1.f, std::min(1.f, o[1] / r))) : 0.f;
+        xym[(size_t)n * 4 + 2] = 0.f;
+        xym[(size_t)n * 4 + 3] = o[3];
+    }
+    const float PI_ = 3.14159265f, HP = 1.5707963f;
+    const std::vector<float> frame = { -PI_, -HP, 0, PI_, -HP, 0,  PI_, -HP, 0, PI_, HP, 0,  PI_, HP, 0, -PI_, HP, 0,
+                                       -PI_, HP, 0, -PI_, -HP, 0,  -PI_, 0, 0, PI_, 0, 0,  0, -HP, 0, 0, HP, 0 };
     GLuint vao, vbo_pos, vbo_glow, vao_vat, vbo_vat;
     glGenVertexArrays(1, &vao); glBindVertexArray(vao);
     glGenBuffers(1, &vbo_pos); glBindBuffer(GL_ARRAY_BUFFER, vbo_pos);
@@ -390,6 +419,21 @@ int run_live(DevState& s, Params& p, int blocks, int threads, bool seq_live, int
     glBufferData(GL_ARRAY_BUFFER, (size_t)N * sizeof(float), nullptr, GL_DYNAMIC_DRAW);
     glVertexAttribPointer(2, 1, GL_FLOAT, GL_FALSE, sizeof(float), (void*)0);
     glEnableVertexAttribArray(2);
+    GLuint vao_map, vbo_map, vao_frame, vbo_frame;                // flat map: positions + border lines
+    glGenVertexArrays(1, &vao_map); glBindVertexArray(vao_map);
+    glGenBuffers(1, &vbo_map); glBindBuffer(GL_ARRAY_BUFFER, vbo_map);
+    glBufferData(GL_ARRAY_BUFFER, xym.size() * sizeof(float), xym.data(), GL_STATIC_DRAW);
+    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 4 * sizeof(float), (void*)0);
+    glVertexAttribPointer(1, 1, GL_FLOAT, GL_FALSE, 4 * sizeof(float), (void*)(3 * sizeof(float)));
+    glEnableVertexAttribArray(0); glEnableVertexAttribArray(1);
+    glBindBuffer(GL_ARRAY_BUFFER, vbo_glow);                       // same glow values as the sphere
+    glVertexAttribPointer(2, 1, GL_FLOAT, GL_FALSE, sizeof(float), (void*)0);
+    glEnableVertexAttribArray(2);
+    glGenVertexArrays(1, &vao_frame); glBindVertexArray(vao_frame);
+    glGenBuffers(1, &vbo_frame); glBindBuffer(GL_ARRAY_BUFFER, vbo_frame);
+    glBufferData(GL_ARRAY_BUFFER, frame.size() * sizeof(float), frame.data(), GL_STATIC_DRAW);
+    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void*)0);
+    glEnableVertexAttribArray(0);
     glGenVertexArrays(1, &vao_vat); glBindVertexArray(vao_vat);
     glGenBuffers(1, &vbo_vat); glBindBuffer(GL_ARRAY_BUFFER, vbo_vat);
     glBufferData(GL_ARRAY_BUFFER, vat.size() * sizeof(float), vat.data(), GL_STATIC_DRAW);
@@ -510,7 +554,7 @@ int run_live(DevState& s, Params& p, int blocks, int threads, bool seq_live, int
     bool show_graphs = true;
 
     bool paused = false, autorot = false;  // A toggles slow auto-rotation
-    bool kUp = false, kDn = false, kSp = false, kA = false;
+    bool kUp = false, kDn = false, kSp = false, kA = false, kM = false;
     int step = 0;
 
     // ---- saving the brain (brains/<name>.brain next to the exe) ----
@@ -552,7 +596,7 @@ int run_live(DevState& s, Params& p, int blocks, int threads, bool seq_live, int
     double t_last = glfwGetTime(), t_title = t_last, sim_acc = 0.0;
     int frames = 0;
     std::printf("Live view: %d neurons.\n"
-                "  Left-drag rotate | wheel zoom | Up/Down speed | Space pause | A auto-rotate | R reset view | Esc quit\n"
+                "  Left-drag rotate | wheel zoom | Up/Down speed | Space pause | A auto-rotate | M flat map | R reset view | Esc quit\n"
                 "  Right-click (hold) poke | 1 burst group A | S group-A auto-stimulus on/off | G highlight group A\n"
                 "  [ ] inhibition down/up | - = background drive down/up | 0 reset dials\n%s", N,
                 seq_live ? "  SEQUENCE: T training on/off | 1-4 cue group A-D | , . learning rate down/up\n" : "");
@@ -568,7 +612,8 @@ int run_live(DevState& s, Params& p, int blocks, int threads, bool seq_live, int
         if (edge(GLFW_KEY_DOWN, kDn)) speed = std::max(speed / 2.0, 1.0 / 64.0);
         if (edge(GLFW_KEY_SPACE, kSp)) paused = !paused;
         if (edge(GLFW_KEY_A, kA))      autorot = !autorot;
-        if (glfwGetKey(win, GLFW_KEY_R) == GLFW_PRESS) { cam = Cam(); }
+        if (edge(GLFW_KEY_M, kM))      cam.map = !cam.map;
+        if (glfwGetKey(win, GLFW_KEY_R) == GLFW_PRESS) { const bool m = cam.map; cam = Cam(); cam.map = m; }
         if (edge(GLFW_KEY_S, kS)) p.auto_stim = p.auto_stim ? 0 : 1;
         if (edge(GLFW_KEY_G, kG)) showA = !showA;
         // hold Enter (or the Reward button) = reward, hold Backspace (or Punish) = punish
@@ -627,6 +672,7 @@ int run_live(DevState& s, Params& p, int blocks, int threads, bool seq_live, int
             const int cap = 400;                       // ~40 ms of simulated time per frame at most
             if (epochs > cap) { epochs = cap; carry = 0.0; } else carry -= epochs;
             if (epochs > 0) {
+                rebase_steps_if_needed(s, p, step, ctx.nnz);  // long runs: keep the step counter in range
                 int begin = step, end = step + epochs * p.M;
                 void* args[] = { &s, &p, &begin, &end };
                 CUDA_CHECK(cudaLaunchCooperativeKernel((void*)simulate, dim3(blocks), dim3(threads), args, 0, 0));
@@ -695,7 +741,7 @@ int run_live(DevState& s, Params& p, int blocks, int threads, bool seq_live, int
                                      (mouth_open && !paused) ? (float)mouth_vol : 0.f);
 
         // ---- draw ----
-        if (autorot && !cam.drag) cam.yaw += (float)dt_wall * 0.12f;
+        if (autorot && !cam.drag && !cam.map) cam.yaw += (float)dt_wall * 0.12f;
         int fw, fh; glfwGetFramebufferSize(win, &fw, &fh);
         glViewport(0, 0, fw, fh);
         glClearColor(0.01f, 0.012f, 0.02f, 1.0f);
@@ -703,10 +749,29 @@ int run_live(DevState& s, Params& p, int blocks, int threads, bool seq_live, int
         const float ex = cam.dist * std::cos(cam.pitch) * std::sin(cam.yaw);
         const float ey = cam.dist * std::sin(cam.pitch);
         const float ez = cam.dist * std::cos(cam.pitch) * std::cos(cam.yaw);
-        const Mat4 mvp = mul(perspective(0.8f, (float)fw / std::max(fh, 1), 0.05f, 50.f), look_at(ex, ey, ez));
+        // flat map: orthographic view sized so the whole map fits at zoom 1
+        int ww0, wh0; glfwGetWindowSize(win, &ww0, &wh0);
+        const float asp0 = (float)std::max(fw, 1) / std::max(fh, 1);
+        const float map_hw = std::max(PI_ * 1.06f, HP * 1.06f * asp0) / cam.mzoom, map_hh = map_hw / asp0;
+        cam.px_world = 2.f * map_hw / std::max(ww0, 1);
+        const Mat4 mvp = cam.map ? ortho2d(cam.mx, cam.my, map_hw, map_hh)
+                                 : mul(perspective(0.8f, asp0, 0.05f, 50.f), look_at(ex, ey, ez));
 
         // right-click: stimulate the neurons under the cursor (ray vs. the sphere)
-        if (glfwGetMouseButton(win, GLFW_MOUSE_BUTTON_RIGHT) == GLFW_PRESS && !ui_wants_mouse()) {
+        if (cam.map && glfwGetMouseButton(win, GLFW_MOUSE_BUTTON_RIGHT) == GLFW_PRESS && !ui_wants_mouse()) {
+            double mx, my; glfwGetCursorPos(win, &mx, &my);
+            const float wx = cam.mx + (float)(2.0 * mx / std::max(ww0, 1) - 1.0) * map_hw;
+            const float wy = cam.my + (float)(1.0 - 2.0 * my / std::max(wh0, 1)) * map_hh;
+            const float rad = 0.245f;                                    // ~14 deg, as on the sphere
+            poke_list.clear();
+            for (int n = 0; n < N; ++n) {
+                float dx = xym[(size_t)n * 4] - wx;
+                if (dx > PI_) dx -= 2 * PI_; else if (dx < -PI_) dx += 2 * PI_;   // the map wraps around
+                const float dy = xym[(size_t)n * 4 + 1] - wy;
+                if (dx * dx + dy * dy < rad * rad) poke_list.push_back(n);
+            }
+            if (!poke_list.empty()) poke(poke_list, step + burst10);
+        } else if (glfwGetMouseButton(win, GLFW_MOUSE_BUTTON_RIGHT) == GLFW_PRESS && !ui_wants_mouse()) {
             double mx, my; int ww, wh;
             glfwGetCursorPos(win, &mx, &my); glfwGetWindowSize(win, &ww, &wh);
             const float nx = (float)(2.0 * mx / std::max(ww, 1) - 1.0), ny = (float)(1.0 - 2.0 * my / std::max(wh, 1));
@@ -742,16 +807,17 @@ int run_live(DevState& s, Params& p, int blocks, int threads, bool seq_live, int
         glUseProgram(prog_vat);
         glUniformMatrix4fv(u_mvp2, 1, GL_FALSE, mvp.m);
         glUniform3f(u_col, 0.10f, 0.16f, 0.22f);
-        glBindVertexArray(vao_vat);
-        glDrawArrays(GL_LINES, 0, (GLsizei)(vat.size() / 3));
+        if (cam.map) { glBindVertexArray(vao_frame); glDrawArrays(GL_LINES, 0, (GLsizei)(frame.size() / 3)); }
+        else         { glBindVertexArray(vao_vat);   glDrawArrays(GL_LINES, 0, (GLsizei)(vat.size() / 3)); }
 
         glBlendFunc(GL_ONE, GL_ONE);                      // additive: overlapping glows add up
         glUseProgram(prog_pts);
         glUniformMatrix4fv(u_mvp, 1, GL_FALSE, mvp.m);
         const float psize = 9.0f * (float)fh / 900.0f * std::sqrt(30000.0f / std::max(N, 1000));
-        glUniform1f(u_ps, psize);
+        // the sphere's points are divided by their depth (~4 at the default view); the map has none
+        glUniform1f(u_ps, cam.map ? psize / 3.0f * std::sqrt(cam.mzoom) : psize);
         glUniform1f(u_showA, showA ? 1.0f : 0.0f);
-        glBindVertexArray(vao);
+        glBindVertexArray(cam.map ? vao_map : vao);
         glDrawArrays(GL_POINTS, 0, N);
 
 #ifdef BRAIN_VIZ_UI
@@ -859,9 +925,13 @@ int run_live(DevState& s, Params& p, int blocks, int threads, bool seq_live, int
         ImGui::Checkbox(seq_live ? "Colour task groups" : layout ? "Colour regions (nerve / A1 / mouth)" : "Highlight group A", &showA);
         ImGui::SameLine();
         ImGui::Checkbox("Auto-rotate", &autorot);
-        if (ImGui::Button("Reset view")) cam = Cam();
-        ImGui::TextDisabled("Right-click + hold on the sphere: stimulate");
-        ImGui::TextDisabled("Left-drag: rotate   Wheel: zoom");
+        ImGui::Checkbox("Flat map (M)", &cam.map);
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Unroll the sphere like a world map: longitude across, latitude up,\n"
+                                                      "the front of the brain in the middle");
+        ImGui::SameLine();
+        if (ImGui::Button("Reset view")) { const bool m = cam.map; cam = Cam(); cam.map = m; }
+        ImGui::TextDisabled(cam.map ? "Right-click + hold on the map: stimulate" : "Right-click + hold on the sphere: stimulate");
+        ImGui::TextDisabled(cam.map ? "Left-drag: pan   Wheel: zoom" : "Left-drag: rotate   Wheel: zoom");
         ImGui::End();
 
         if (show_graphs) {

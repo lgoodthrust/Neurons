@@ -70,7 +70,7 @@ Technical feedback, criticism, and contributions are welcome.
 ## Building
 
 Requirements:
-- Visual Studio 2022 with C++ development tools
+- Visual Studio 2022 with C++17 development tools
 - NVIDIA CUDA Toolkit 13.5
 - Windows 10 SDK
 - NVIDIA GPU with CUDA compute capability 8.0 or higher (Ampere or newer). Currently tested on the RTX 5060 Ti.
