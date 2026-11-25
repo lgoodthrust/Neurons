@@ -2,7 +2,6 @@
 
 An experimental, biologically inspired neural simulator focused on biological fidelity, computational efficiency, and real-time performance.
 
-if you want "all" the details read the "WHAT_IS_THIS.txt" file.
 
 Built from scratch in C++17 and CUDA without existing neural simulation frameworks such as NEST, Brian2, or GeNN.
 
@@ -10,7 +9,7 @@ Built from scratch in C++17 and CUDA without existing neural simulation framewor
 
 - Adaptive exponential integrate-and-fire (AdEx) neurons with four dendritic compartments and back-propagating spikes.
 - Conductance-based AMPA, NMDA, and GABA synapses.
-- 160 explicit synaptic inputs per neuron, with Poisson background drive representing approximately 6,900 total inputs.
+- Configurable explicit synaptic inputs per neuron, with Poisson background drive.
 - Configurable time step of 0.0625–0.5 ms (default 0.1 ms).
 - Axonal delays of 1–3 ms.
 
@@ -39,6 +38,7 @@ Built from scratch in C++17 and CUDA without existing neural simulation framewor
 ## Performance
 
 Benchmarked on an NVIDIA RTX 5060 Ti.
+- all tests use 160 synapses per neurons at 0.1ms delta
 
 | Neurons | Synapses | Simulation Speed |
 |---:|---:|---:|
@@ -46,6 +46,19 @@ Benchmarked on an NVIDIA RTX 5060 Ti.
 | 30,000 | 4.8M | 9.8× real time |
 | 100,000 | 16M | 2.5× real time |
 | 1,000,000 | 160M | 0.2× real time |
+
+## Experimental Results
+
+### Auditory Frequency Learning
+<img width="1600" height="1000" alt="frequency" src="https://github.com/user-attachments/assets/9a8c692e-b5e3-4fb5-9e35-f8db31f4415a" />
+
+
+### Sequence Learning
+<img width="1600" height="1000" alt="sequence" src="https://github.com/user-attachments/assets/c7cca65e-f922-42d5-920f-d81b6cfb0b5c" />
+
+
+### Numerical Validation
+<img width="1500" height="1000" alt="validation" src="https://github.com/user-attachments/assets/618300a2-067f-480c-9a97-83353c0da900" />
 
 ## Development
 
